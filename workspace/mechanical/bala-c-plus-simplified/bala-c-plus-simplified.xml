@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- MJCF -->
+<!-- MuJoCo Format: XML for describing physical components of the robot and how
+     they fit together. Reference: 
+     https://mujoco.readthedocs.io/en/stable/XMLreference.html -->
+
+<mujoco model="bala-c-plus-simplified">
+
+  <!-- ===================================================================== -->
+  <!-- Settings -->
+
+  <!-- Sets options for parser and compiler:
+       angle: "degree" (MJCF default) or "radian"
+       coordinate: positions/orientations expressed in "local" or "global" frame
+       meshdir: absolute or relative path to STL files
+       autolimits: automatically set limited="true" if range attribute given -->
+  <compiler angle="radian"
+            coordinate="local"
+            meshdir="meshes"
+            autolimits="true"/>
+
+  <!-- Sets options for physics simulation:
+       timestep: time between measurement/control steps in simulator
+       gravity: gravitational acceleration vector
+       integrator: algorithm used to compute positions/velocities -->
+  <option timestep="0.005"
+          gravity="0 0 -9.81"
+          integrator="implicitfast"/>
+
+  <!-- ===================================================================== -->
+  <!-- Defaults -->
+
+  <!-- Specifies default values for various attributes -->
+  <default>
+    <!-- Geometry defaults: solid surfaces with reasonable friction
+         contype: bit mask of which collision group the geom belongs to
+         conaffinity: bit mask of which group this geom can collide with
+         friction: coefficients (sliding, torsional, rolling)
+         Note: contact friction between two geoms is the max of either
+         geom friction values. 0.8 is an estimate for rubber on a floor/desk -->
+    <geom contype="1" 
+          conaffinity="1" 
+          friction="0.8 0.005 0.0001"/>
+
+    <!-- Visual-only geometry: never collides. Meshes are demoted to this
+         because MuJoCo convexifies them. -->
+    <default class="visual">
+      <geom contype="0" conaffinity="0" group="2"/>
+    </default>
+
+    <!-- Collision-only geometry: primitives, hidden by default. -->
+    <default class="collision">
+      <geom group="3" rgba="1 0 0 0.3"/>
+    </default>
+
+    <!-- TODO: measure motor stall/no-load attributes. See Claude. -->
+    <default class="motor">
+      <general gaintype="fixed"  gainprm="0.085"
+               biastype="affine" biasprm="0 0 -0.0095"
+               ctrlrange="-1 1"/>
+    </default>
+
+    <!-- TODO: measure gearbox attributes. See Claude. -->
+    <default class="wheel">
+      <joint type="hinge"
+             axis="0 1 0"
+             damping="0"
+             frictionloss="0.012"
+             armature="3.0e-4"/>
+    </default>
+  </default>
+
+  <!-- ===================================================================== -->
+  <!-- Assets: meshes and visual textures -->
+
+  <!-- Define assets to use when building the world -->
+  <asset>
+    <!-- Define mesh, file location, and scale (convert to meters) -->
+    <mesh name="chassis_mesh"
+          file="chassis.stl"
+          scale="0.001 0.001 0.001"/>
+    <mesh name="wheel_left_mesh"
+          file="wheel_left.stl"
+          scale="0.001 0.001 0.001"/>
+    <mesh name="wheel_right_mesh"
+          file="wheel_right.stl"
+          scale="0.001 0.001 0.001"/>
+
+    <!-- Use simple gradient for sky texture -->
+    <texture type="skybox"
+             builtin="gradient"
+             rgb1="0.5 0.7 1"
+             rgb2="0.95 0.95 1"
+             width="256"
+             height="256"/>
+
+    <!-- Use built-in checker pattern to create grid texture -->
+    <texture name="grid"
+             type="2d"
+             builtin="checker"
+             rgb1="0.2 0.3 0.4"
+             rgb2="0.3 0.4 0.5"
+             width="512"
+             height="512"
+             mark="cross"
+             markrgb="0.8 0.8 0.8"/>
+
+    <!-- Create a grid material from the grid texture  -->
+    <material name="grid"
+              texture="grid"
+              texrepeat="5 5"
+              reflectance="0"
+              specular="0"
+              shininess="0"/>
+  </asset>
+
+  <!-- ===================================================================== -->
+  <!-- World and robot bodies -->
+
+  <!-- The world and everything in it -->
+  <worldbody>
+
+    <!-- Lighting -->
+    <light pos="0 0 1.5" 
+           dir="0 0 -1" 
+           diffuse="0.8 0.8 0.8"/>
+
+    <!-- Ground plane at z=0, grid texture. If size x or y is set to 0, the 
+         plane is infinitely wide/long with 0 size. We'll make it large but
+         finite. -->
+    <geom name="ground"
+          type="plane"
+          size="5 5 0.1"
+          material="grid"/>
+
+    <!-- Define the robot as a nested tree of bodies and joints. The origin of
+         the chassis is the center of the axles, which sits 33.25 mm above the 
+         ground (wheel radius). This allows the wheels to be touching the ground
+         at the start of the episode. -->
+    <body name="chassis" pos="0 0 0.03325">
+
+      <!-- Free joint: robot can translate/orient freely in world frame -->
+      <freejoint name="root"/>
+
+      <!-- Visual mesh - only for displaying in the simulator visualizer -->
+      <geom name="chassis_vis"
+            class="visual"
+            type="mesh"
+            mesh="chassis_mesh"
+            rgba="0.988 0.431 0.110 0.3"/>
+     
+      <!-- Collision geometry - simple box, just for detecting collisions with
+           the ground -->
+      <geom name="chassis_col"
+            class="collision"
+            type="box"
+            size="0.015 0.028 0.030"
+            pos="0 0 0.030"
+            group="0"
+            rgba="0 0 1 0.3"/>
+
+      <!-- TODO: double-check mass of the chassis -->
+      <!-- Chassis inertial properties (copied from FreeCAD script output) -->
+      <inertial pos="-0.006500 0.000000 0.029000" 
+                mass="0.062000" 
+                fullinertia="0.000031487 0.000031243 0.000009372 0.000000000 0.000000484 0.000000000"/>
+
+      <!-- Site for IMU sensor: measured from the chassis's origin, displayed
+           as a blue ball (will be inside chassis) -->
+      <site name="imu_site"
+            type="box"
+            pos="0.00335 0.0 0.0375" 
+            size="0.003 0.003 0.0007"
+            rgba="0 0 1.0 1.0"/>
+
+      <!-- Visual marker to show the "front" of the robot -->
+      <geom type="box"
+            size="0.001 0.01 0.005" 
+            pos="0.0135 0 0.0529"
+            rgba="0 1.0 0 1.0" 
+            contype="0" 
+            conaffinity="0"/>
+
+      <!-- Left wheel -->
+      <body name="wheel_left" pos="0 0.04 0">
+
+        <!-- Use wheel default properties -->
+        <joint name="left_wheel_joint" class="wheel"/>
+
+        <!-- Visual mesh -->
+        <geom name="wheel_left_vis"
+              class="visual"
+              type="mesh"
+              mesh="wheel_left_mesh"
+              rgba="0.1 0.1 0.1 1.0"/>
+
+        <!-- Collision geometry: use a basic cylinder -->
+        <geom name="wheel_left_col"
+              class="collision"
+              type="cylinder"
+              size="0.03325 0.006"
+              zaxis="0 1 0"/>
+
+        <!-- Wheel inertial properties (copied from FreeCAD script output) -->
+        <inertial pos="0.000000 0.000000 0.000000" 
+                  mass="0.018000" 
+                  diaginertia="0.000005257 0.000009950 0.000005257"/>
+      </body>
+
+      <!-- Right wheel -->
+      <body name="wheel_right" pos="0 -0.04 0">
+
+        <!-- Use wheel default properties -->
+        <joint name="left_wheel_joint" class="wheel"/>
+        
+        <!-- Visual mesh -->
+        <geom name="wheel_right_vis"
+              class="visual"
+              type="mesh"
+              mesh="wheel_right_mesh"
+              rgba="0.1 0.1 0.1 1.0"/>
+        
+        <!-- Collision geometry: use a basic cylinder -->
+        <geom name="wheel_right_col"
+              class="collision"
+              type="cylinder"
+              size="0.03325 0.006"
+              zaxis="0 1 0"/>
+
+        <!-- Wheel inertial properties (copied from FreeCAD script output) -->
+        <inertial pos="0.000000 0.000000 0.000000" 
+                  mass="0.018000" 
+                  diaginertia="0.000005257 0.000009950 0.000005257"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- ===================================================================== -->
+  <!-- Actuators: motors driving the wheel joints -->
+
+  <!-- Use defaults for motor/actuator attributes -->
+  <!-- TODO: double-check motor attributes (see defaults)-->
+  <actuator>
+    <general name="left_motor"  class="motor" joint="left_wheel_joint"/>
+    <general name="right_motor" class="motor" joint="right_wheel_joint"/>
+  </actuator>
+
+  <!-- ===================================================================== -->
+  <!-- Sensors: IMU and encoders -->
+
+  <!-- Define all the sensors and their locations -->
+  <sensor>
+    <!-- IMU sensors at imu_site. While our MPU6886 only provides gyro and
+         acceleration data, we can get ground-truth orientation here to help
+         us with training (even if we don't have it on the real robot). -->
+    <accelerometer name="imu_accel" site="imu_site"/>
+    <gyro name="imu_gyro" site="imu_site"/>
+    <framequat name="imu_orientation" objtype="site" objname="imu_site"/>
+
+    <!-- Wheel encoders (joint position and velocity). This is privileged 
+         information as the real robot does not have encoders. -->
+    <jointpos name="left_wheel_pos" joint="left_wheel_joint"/>
+    <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
+    <jointvel name="left_wheel_vel" joint="left_wheel_joint"/>
+    <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
+  </sensor>
+
+</mujoco>
