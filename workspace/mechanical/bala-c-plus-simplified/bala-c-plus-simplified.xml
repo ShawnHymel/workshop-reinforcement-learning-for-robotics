@@ -49,25 +49,36 @@
       <geom contype="0" conaffinity="0" group="2"/>
     </default>
 
-    <!-- Collision-only geometry: primitives, hidden by default. -->
+      <!-- Collision-only geometry: primitives, hidden by default. -->
     <default class="collision">
       <geom group="3" rgba="1 0 0 0.3"/>
     </default>
 
-    <!-- TODO: measure motor stall/no-load attributes. See Claude. -->
+    <!-- FEETECH FM90 (measured through the real electronics: 16340 cell + 
+         L9110S H-bridge, no boost, ~3.2V at the motor leads).
+           stall torque (fwd) = 0.157 N-m  (182 g at 88 mm arm)
+           no-load speed = 10.4 rad/s (99.3 RPM)
+           no-load current = ~50 mA, stall current = ~460 mA  -> drag ratio 0.11
+         biasprm[2] = -(gainprm - frictionloss)/omega_nl, satisfies the no-load
+         constraint (torque vanishes at omega_nl). Single motor measured; L/R
+         asymmetry (~few %) left to domain randomization. -->
     <default class="motor">
-      <general gaintype="fixed"  gainprm="0.085"
-               biastype="affine" biasprm="0 0 -0.0095"
+      <general gaintype="fixed"  gainprm="0.157"
+               biastype="affine" biasprm="0 0 -0.0135"
                ctrlrange="-1 1"/>
     </default>
 
-    <!-- TODO: measure gearbox attributes. See Claude. -->
+    <!-- Gearbox: frictionloss = drag budget (0.11 * stall), assuming 
+         all-Coulomb (phi=0); TODO: measure this, but handled by DR for now
+         armature = tau_m * b_m - I_wheel = 0.035s * 0.0135 - 1e-5
+         damping stays 0: same functional form as biasprm[2], would double-
+         count -->
     <default class="wheel">
       <joint type="hinge"
              axis="0 1 0"
              damping="0"
-             frictionloss="0.012"
-             armature="3.0e-4"/>
+             frictionloss="0.0171"
+             armature="4.6e-4"/>
     </default>
   </default>
 
@@ -155,25 +166,27 @@
       <geom name="chassis_col"
             class="collision"
             type="box"
-            size="0.015 0.028 0.030"
+            size="0.015 0.022 0.040"
             pos="0 0 0.030"
             group="0"
-            rgba="0 0 1 0.3"/>
+            rgba="0.2 0.2 0.0 0.2"/>
 
-      <!-- TODO: double-check mass of the chassis -->
       <!-- Chassis inertial properties (copied from FreeCAD script output) -->
       <inertial pos="-0.006500 0.000000 0.029000" 
                 mass="0.062000" 
                 fullinertia="0.000031487 0.000031243 0.000009372 0.000000000 0.000000484 0.000000000"/>
 
       <!-- Site for IMU sensor: measured from the chassis's origin, displayed
-           as a blue ball (will be inside chassis) -->
+           as a blue box (will be inside chassis). Axis mapping (IMU -> 
+           chassis): +X -> -Y (right), +Y -> -Z (down), +Z -> +X (forward). quat
+           is the (0.5 -0.5 0.5 -0.5) frame for that. -->
       <site name="imu_site"
             type="box"
-            pos="0.00335 0.0 0.0375" 
+            pos="0.00335 0.0 0.0375"
             size="0.003 0.003 0.0007"
+            quat="0.5 -0.5 0.5 -0.5"
             rgba="0 0 1.0 1.0"/>
-
+      
       <!-- Visual marker to show the "front" of the robot -->
       <geom type="box"
             size="0.001 0.01 0.005" 
@@ -195,7 +208,7 @@
               mesh="wheel_left_mesh"
               rgba="0.1 0.1 0.1 1.0"/>
 
-        <!-- Collision geometry: use a basic cylinder -->
+        <!-- Collision geometry: use a basic cylinder (orig: 0.03325) -->
         <geom name="wheel_left_col"
               class="collision"
               type="cylinder"
@@ -212,7 +225,7 @@
       <body name="wheel_right" pos="0 -0.04 0">
 
         <!-- Use wheel default properties -->
-        <joint name="left_wheel_joint" class="wheel"/>
+        <joint name="right_wheel_joint" class="wheel"/>
         
         <!-- Visual mesh -->
         <geom name="wheel_right_vis"
@@ -240,7 +253,6 @@
   <!-- Actuators: motors driving the wheel joints -->
 
   <!-- Use defaults for motor/actuator attributes -->
-  <!-- TODO: double-check motor attributes (see defaults)-->
   <actuator>
     <general name="left_motor"  class="motor" joint="left_wheel_joint"/>
     <general name="right_motor" class="motor" joint="right_wheel_joint"/>
