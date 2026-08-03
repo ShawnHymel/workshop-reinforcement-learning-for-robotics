@@ -91,7 +91,7 @@ class BalanceBotEnv(gym.Env):
         actuator_right_motor="right_motor",
         left_wheel_joint="left_wheel_joint",
         right_wheel_joint="right_wheel_joint",
-        pitch_trim_deg=0.0,
+        chassis_trim_deg=0.0,
         alive_bonus=1.0, 
         pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
@@ -117,9 +117,9 @@ class BalanceBotEnv(gym.Env):
             actuator_right_motor (str): MJCF name of the right motor actuator
             left_wheel_joint (str): MJCF name of the left wheel joint
             right_wheel_joint (str): MJCF name of the right wheel joint
-            pitch_trim_deg (float): Equilibrium lean angle in degrees. If CoM is above the axle, 
-                                    this will be 0. If CoM is behind the axle, this should be a 
-                                    positive value to denote a natural lean forward to balance.
+            chassis_trim_deg (float): Equilibrium lean angle in degrees, in the chassis frame. If 
+                                    CoM is above the axle, this will be 0. If CoM is behind the 
+                                    axle, this should be a positive value to denote a natural lean.
             alive_bonus (float): Reward given each step the robot stays upright,
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
@@ -197,9 +197,9 @@ class BalanceBotEnv(gym.Env):
         self._right_gain_orig = float(self.model.actuator_gainprm[self.right_motor_id, 0])
 
         # Define observation space (i.e. what the agent can see) and limits
-        # [pitch, pitch_rate]
-        obs_low  = np.array([-np.pi, -20.0], dtype=np.float32)
-        obs_high = np.array([ np.pi,  20.0], dtype=np.float32)
+        # [pitch, pitch rate, forward velocity estimate]
+        obs_low  = np.array([-np.pi, -20.0, -5.0], dtype=np.float32)
+        obs_high = np.array([ np.pi, 20.0, 5.0], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
         # Define action space (i.e. what the agent can do) and limits, normalized to [-1, 1]
@@ -208,8 +208,22 @@ class BalanceBotEnv(gym.Env):
         actions_high = np.array([1.0, 1.0], dtype=np.float32)
         self.action_space = spaces.Box(actions_low, actions_high, dtype=np.float32)
 
-        # Save pitch trim
-        self._pitch_trim_rad = math.radians(pitch_trim_deg)
+        # Save the chassis equilibrium pitch
+        self._eq_chassis_rad = math.radians(chassis_trim_deg)
+
+        # Set the model to the equilibrium pitch
+        self.data.qpos[3:7] = [
+            math.cos(self._eq_chassis_rad / 2), 0,
+            math.sin(self._eq_chassis_rad / 2), 0,
+        ]
+        mujoco.mj_forward(self.model, self.data)
+
+        # Read the IMU sensor and save the equilibrium pitch (from IMU perspective)
+        w, x, y, z = self.data.sensor(self.sensor_imu_orientation).data
+        self._pitch_trim_rad = math.atan2(1.0 - 2.0*(x*x + y*y), -2.0*(y*z + w*x))
+
+        # Reset simulationo
+        mujoco.mj_resetData(self.model, self.data)
 
         # Save reward coefficients
         self.alive_bonus = alive_bonus
@@ -234,8 +248,9 @@ class BalanceBotEnv(gym.Env):
         self._action_delay = 0
         self._action_buffer = []
 
-        # Set initial pitch state
+        # Set initial pitch and velocity estimate
         self._pitch = 0.0
+        self._vel_est = 0.0
 
         # Initialize the viewer
         self._viewer = None
@@ -263,8 +278,14 @@ class BalanceBotEnv(gym.Env):
         self._pitch = self.alpha * (self._pitch + pitch_rate * self.model.opt.timestep) + \
                     (1 - self.alpha) * accel_pitch
 
+        # Forward acceleration estimate: Z axis accel - gravity component (account for tilt)
+        a_fwd = accel_z - self._gravity_mag_orig * math.sin(self._pitch)
+
+        # Leaky integrator to estimate velocity. 0.995 lean = ~1 sec memory
+        self._vel_est = 0.995 * (self._vel_est + a_fwd * self.model.opt.timestep)
+
         # Construct initial observation
-        obs = np.array([self._pitch, pitch_rate], dtype=np.float32)
+        obs = np.array([self._pitch, pitch_rate, self._vel_est], dtype=np.float32)
 
         # Optionally add Gaussian noise to observations
         if self.dr is not None:
@@ -335,8 +356,15 @@ class BalanceBotEnv(gym.Env):
         # Reset the simulator
         mujoco.mj_resetData(self.model, self.data)
 
-        # Reset pitch
-        self._pitch = 0.0
+        # Start at equilibrium lean
+        self.data.qpos[3:7] = [
+            math.cos(self._eq_chassis_rad / 2), 0,
+            math.sin(self._eq_chassis_rad / 2), 0,
+        ]
+
+        # Reset pitch (IMU frame) and velocity estimate
+        self._pitch = self._pitch_trim_rad
+        self._vel_est = 0.0
 
         # Impart an initial angular velocity around the y axis so the agent learns to recover
         # Note: qvel[4] = wy (rad/s)
@@ -463,14 +491,14 @@ class BalanceBotEnv(gym.Env):
         #   alive: reward for staying upright each step
         #   pitch: penalty for leaning (use privileged info, not observed pitch)
         #   action: penalty for jittery motor commands
-        #   yaw: penalty for rotating around Z axis
         #   wheel_vel_penalty: penalty for moving forward or backward
+        #   yaw: penalty for rotating around Z axis
         pitch_penalty = self.pitch_penalty_coef * pitch_error**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
+        wheel_vel_penalty = self.wheel_vel_penalty_coef * fwd_vel**2
         yaw_rate = self.data.qvel[5]
         yaw_penalty = self.yaw_penalty_coef * abs(yaw_rate)
-        wheel_vel_penalty = self.wheel_vel_penalty_coef * fwd_vel**2
-        reward = self.alive_bonus - pitch_penalty - action_penalty - yaw_penalty - wheel_vel_penalty
+        reward = self.alive_bonus - pitch_penalty - action_penalty - wheel_vel_penalty - yaw_penalty
 
         # Termination (if robot tips or we run out of time in the episode)
         terminated = abs(pitch_error) > math.radians(self.tip_threshold_deg)
