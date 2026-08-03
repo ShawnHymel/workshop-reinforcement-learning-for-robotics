@@ -91,11 +91,12 @@ class BalanceBotEnv(gym.Env):
         actuator_right_motor="right_motor",
         left_wheel_joint="left_wheel_joint",
         right_wheel_joint="right_wheel_joint",
+        pitch_trim_deg=0.0,
         alive_bonus=1.0, 
-        pitch_penalty_coef=5.0, 
+        pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
-        yaw_penalty_coef=0.1,
-        wheel_vel_penalty_coef=0.1,
+        yaw_penalty_coef=0.0,
+        wheel_vel_penalty_coef=0.0,
         tip_threshold_deg=30.0,
         domain_rand=None,
     ):
@@ -116,6 +117,9 @@ class BalanceBotEnv(gym.Env):
             actuator_right_motor (str): MJCF name of the right motor actuator
             left_wheel_joint (str): MJCF name of the left wheel joint
             right_wheel_joint (str): MJCF name of the right wheel joint
+            pitch_trim_deg (float): Equilibrium lean angle in degrees. If CoM is above the axle, 
+                                    this will be 0. If CoM is behind the axle, this should be a 
+                                    positive value to denote a natural lean forward to balance.
             alive_bonus (float): Reward given each step the robot stays upright,
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
@@ -203,6 +207,9 @@ class BalanceBotEnv(gym.Env):
         actions_low = np.array([-1.0, -1.0], dtype=np.float32)
         actions_high = np.array([1.0, 1.0], dtype=np.float32)
         self.action_space = spaces.Box(actions_low, actions_high, dtype=np.float32)
+
+        # Save pitch trim
+        self._pitch_trim_rad = math.radians(pitch_trim_deg)
 
         # Save reward coefficients
         self.alive_bonus = alive_bonus
@@ -444,6 +451,9 @@ class BalanceBotEnv(gym.Env):
         up_z = 1.0 - 2.0 * (x * x + y * y)
         pitch_true = math.atan2(up_z, -up_y)
 
+        # Figure out how far off the natural lean (pitch trim) we are
+        pitch_error = pitch_true - self._pitch_trim_rad
+
         # Get average wheel velocity (privileged info)
         wheel_vel_l = self.data.sensor(self.sensor_left_wheel_vel).data[0]
         wheel_vel_r = self.data.sensor(self.sensor_right_wheel_vel).data[0]
@@ -455,7 +465,7 @@ class BalanceBotEnv(gym.Env):
         #   action: penalty for jittery motor commands
         #   yaw: penalty for rotating around Z axis
         #   wheel_vel_penalty: penalty for moving forward or backward
-        pitch_penalty = self.pitch_penalty_coef * pitch_true**2
+        pitch_penalty = self.pitch_penalty_coef * pitch_error**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
         yaw_rate = self.data.qvel[5]
         yaw_penalty = self.yaw_penalty_coef * abs(yaw_rate)
@@ -463,7 +473,7 @@ class BalanceBotEnv(gym.Env):
         reward = self.alive_bonus - pitch_penalty - action_penalty - yaw_penalty - wheel_vel_penalty
 
         # Termination (if robot tips or we run out of time in the episode)
-        terminated = abs(pitch_true) > math.radians(self.tip_threshold_deg)
+        terminated = abs(pitch_error) > math.radians(self.tip_threshold_deg)
         truncated = self._step >= self.max_steps
 
         return obs, reward, terminated, truncated, {}
