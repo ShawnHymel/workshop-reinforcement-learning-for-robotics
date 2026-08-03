@@ -32,6 +32,8 @@ class DomainRandomConfig:
                              Simulates IMU noise.
         pitch_rate_noise_std_dev: Standard deviation of Gaussian noise added to pitch rate
                                   observation. Simulates IMU noise.
+        yaw_rate_noise_std_dev: Standard deviation of Gaussian noise added to yaw rate
+                                observation. Simulates IMU noise.
         action_delay_steps: Number of steps to delay actions (0=disabled). Simulates I2C and motor 
                             response latency.
         action_delay_random: If True, randomize delay 0..action_delay_steps each episode.
@@ -54,6 +56,7 @@ class DomainRandomConfig:
     """
     pitch_noise_std_dev: float = 0.0
     pitch_rate_noise_std_dev: float = 0.0
+    yaw_rate_noise_std_dev: float = 0.0
     action_delay_steps: int = 0
     action_delay_random: bool = False
     motor_noise_scale: float = 0.0
@@ -95,8 +98,9 @@ class BalanceBotEnv(gym.Env):
         alive_bonus=1.0, 
         pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
+        vel_penalty_coef=0.0,
+        vel_penalty_cap=0.25,
         yaw_penalty_coef=0.0,
-        wheel_vel_penalty_coef=0.0,
         tip_threshold_deg=30.0,
         domain_rand=None,
     ):
@@ -123,10 +127,11 @@ class BalanceBotEnv(gym.Env):
             alive_bonus (float): Reward given each step the robot stays upright,
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
+            vel_penalty_coef (float): Scales the forward/backward estimated velocity to
+                                          discourage cruising to stay upright
+            vel_penalty_cap (float): Bound the penalty for cruising
             yaw_penalty_coef (float): Scales the abs(yaw_rate) penalty, discourages spinning around
                                       the Z axis
-            wheel_vel_penalty_coef (float): Scales the forward/backward average wheel velocity to
-                                       discourage cruising to stay upright
             tip_threshold_deg (float): Angle (degrees) in which the robot is considered tipped
             domain_rand (DomainRandomConfig): Configuration for performing various domain
                                               randomizations (None to disable)
@@ -197,9 +202,9 @@ class BalanceBotEnv(gym.Env):
         self._right_gain_orig = float(self.model.actuator_gainprm[self.right_motor_id, 0])
 
         # Define observation space (i.e. what the agent can see) and limits
-        # [pitch, pitch rate, forward velocity estimate]
-        obs_low  = np.array([-np.pi, -20.0, -5.0], dtype=np.float32)
-        obs_high = np.array([ np.pi, 20.0, 5.0], dtype=np.float32)
+        # [pitch, pitch rate, forward velocity estimate, yaw rate]
+        obs_low  = np.array([-np.pi, -20.0, -5.0, -20.0], dtype=np.float32)
+        obs_high = np.array([ np.pi, 20.0, 5.0, 20.0], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
         # Define action space (i.e. what the agent can do) and limits, normalized to [-1, 1]
@@ -229,8 +234,11 @@ class BalanceBotEnv(gym.Env):
         self.alive_bonus = alive_bonus
         self.pitch_penalty_coef = pitch_penalty_coef
         self.action_penalty_coef = action_penalty_coef
+        self.vel_penalty_coef = vel_penalty_coef
         self.yaw_penalty_coef = yaw_penalty_coef
-        self.wheel_vel_penalty_coef = wheel_vel_penalty_coef
+
+        # Save velocity penalty cap
+        self.vel_penalty_cap = vel_penalty_cap
 
         # Save the original gravity magnitude
         self._gravity_mag_orig = float(np.linalg.norm(self.model.opt.gravity))
@@ -268,6 +276,7 @@ class BalanceBotEnv(gym.Env):
         # Read raw IMU sensor data
         _, accel_y, accel_z = self.data.sensor(self.sensor_imu_accel).data
         pitch_rate = self.data.sensor(self.sensor_imu_gyro).data[0]
+        yaw_rate = self.data.sensor(self.sensor_imu_gyro).data[1]
 
         # Accelerometer-derived pitch estimate
         accel_pitch = math.atan2(accel_z, -accel_y)
@@ -285,7 +294,7 @@ class BalanceBotEnv(gym.Env):
         self._vel_est = 0.995 * (self._vel_est + a_fwd * self.model.opt.timestep)
 
         # Construct initial observation
-        obs = np.array([self._pitch, pitch_rate, self._vel_est], dtype=np.float32)
+        obs = np.array([self._pitch, pitch_rate, self._vel_est, yaw_rate], dtype=np.float32)
 
         # Optionally add Gaussian noise to observations
         if self.dr is not None:
@@ -293,6 +302,8 @@ class BalanceBotEnv(gym.Env):
                 obs[0] += self.np_random.normal(0.0, self.dr.pitch_noise_std_dev)
             if self.dr.pitch_rate_noise_std_dev > 0.0:
                 obs[1] += self.np_random.normal(0.0, self.dr.pitch_rate_noise_std_dev)
+            if self.dr.yaw_rate_noise_std_dev > 0.0:
+                obs[3] += self.np_random.normal(0.0, self.dr.yaw_rate_noise_std_dev)
  
         return obs
 
@@ -482,23 +493,17 @@ class BalanceBotEnv(gym.Env):
         # Figure out how far off the natural lean (pitch trim) we are
         pitch_error = pitch_true - self._pitch_trim_rad
 
-        # Get average wheel velocity (privileged info)
-        wheel_vel_l = self.data.sensor(self.sensor_left_wheel_vel).data[0]
-        wheel_vel_r = self.data.sensor(self.sensor_right_wheel_vel).data[0]
-        fwd_vel = 0.5 * (wheel_vel_l + wheel_vel_r)
-
-        # Reward function: alive - (A*pitch^2) - (B*action^2) - C*abs(yaw) - D*avg(wheel_vel)
+        # Reward function: alive - (A*pitch^2) - (B*action^2) - C*avg(vel_penalty) - D*abs(yaw)
         #   alive: reward for staying upright each step
         #   pitch: penalty for leaning (use privileged info, not observed pitch)
         #   action: penalty for jittery motor commands
-        #   wheel_vel_penalty: penalty for moving forward or backward
+        #   vel_penalty: penalty for moving forward or backward (capped to a limit)
         #   yaw: penalty for rotating around Z axis
         pitch_penalty = self.pitch_penalty_coef * pitch_error**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
-        wheel_vel_penalty = self.wheel_vel_penalty_coef * fwd_vel**2
-        yaw_rate = self.data.qvel[5]
-        yaw_penalty = self.yaw_penalty_coef * abs(yaw_rate)
-        reward = self.alive_bonus - pitch_penalty - action_penalty - wheel_vel_penalty - yaw_penalty
+        vel_penalty = self.vel_penalty_coef * min(self._vel_est**2, self.vel_penalty_cap)
+        yaw_penalty = self.yaw_penalty_coef * abs(self.data.qvel[5])
+        reward = self.alive_bonus - pitch_penalty - action_penalty - vel_penalty - yaw_penalty
 
         # Termination (if robot tips or we run out of time in the episode)
         terminated = abs(pitch_error) > math.radians(self.tip_threshold_deg)
