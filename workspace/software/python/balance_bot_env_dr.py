@@ -280,7 +280,6 @@ class BalanceBotEnv(gym.Env):
 
         # Set initial pitch, velocity, position, and heading estimates
         self._pitch = 0.0
-        self._vel_est = 0.0
         self._heading_est = 0.0
         self._cmd_vel = 0.0
         self._cmd_pos = 0.0
@@ -321,12 +320,6 @@ class BalanceBotEnv(gym.Env):
 
         # Get timestep
         dt = self.model.opt.timestep
-
-        # Forward acceleration estimate: Z axis accel - gravity component (account for tilt)
-        a_fwd = accel_z - self._gravity_mag_orig * math.sin(self._pitch)
-
-        # Leaky integrator to estimate velocity
-        self._vel_est = self._vel_leak * (self._vel_est + (a_fwd * dt))
  
         # Leaky integrator to estimate heading (from yaw rate IMU measurement)
         self._heading_est = self._heading_leak * (self._heading_est + (yaw_rate * dt))
@@ -334,7 +327,7 @@ class BalanceBotEnv(gym.Env):
         # Construct observation vector
         obs = np.array([self._pitch, 
                         pitch_rate, 
-                        self._vel_est, 
+                        self._cmd_vel,
                         yaw_rate, 
                         self._cmd_pos,  # Computed in step(), as it needs the action values 
                         self._heading_est], dtype=np.float32)
@@ -418,7 +411,6 @@ class BalanceBotEnv(gym.Env):
 
         # Reset pitch (IMU frame), velocity, position, and heading estimate
         self._pitch = self._pitch_trim_rad
-        self._vel_est = 0.0
         self._heading_est = 0.0
         self._cmd_vel = 0.0
         self._cmd_pos = 0.0
@@ -571,7 +563,7 @@ class BalanceBotEnv(gym.Env):
         #   heading: penalty for turning (estimated via leaky integrator)
         pitch_penalty = self.pitch_penalty_coef * pitch_error**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
-        vel_penalty = self.vel_penalty_coef * min(self._vel_est**2, self.vel_penalty_cap)
+        vel_penalty = self.vel_penalty_coef * min(self._cmd_vel**2, self.vel_penalty_cap)
         pos_penalty = self.cmd_pos_penalty_coef * self._cmd_pos**2
         heading_penalty = self.heading_penalty_coef * self._heading_est**2
         reward = self.alive_bonus - pitch_penalty - action_penalty - vel_penalty - \
@@ -594,7 +586,7 @@ class BalanceBotEnv(gym.Env):
         info = {
             "estimator/cmd_pos_est": float(self._cmd_pos),
             "estimator/cmd_pos_true": float(self._fwd_disp_true),
-            "estimator/vel_est": float(self._vel_est),
+            "estimator/cmd_vel_est": float(self._cmd_vel),
             "estimator/vel_true": float(true_vel),
             "estimator/heading_est": float(self._heading_est),
             "estimator/heading_true": float(true_heading),
