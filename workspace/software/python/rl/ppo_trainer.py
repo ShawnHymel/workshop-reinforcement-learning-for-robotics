@@ -717,6 +717,16 @@ def train(config: PPOConfig, envs=None, agent=None):
                         if config.checkpoint_interval is not None:
                             recent_returns.append(float(episodic_return))
 
+            # Estimator diagnostics: auto-log any "estimator/" key the env emits. Skip keys that
+            # start with the prefix "_"
+            if global_step % 1000 == 0:
+                for key, val in infos.items():
+                    if not key.startswith("estimator/"):
+                        continue
+                    if key.startswith("_"):
+                        continue
+                    writer.add_scalar(key, float(np.nanmean(val)), global_step)
+
         # Compute returns for each timestep for each environment. Some terminology:
         #   value[t]: critic's predicted total, discounted rewards looking forward from step t
         #   return[t]: actual total, discounted rewards from step t onward (computed by walking

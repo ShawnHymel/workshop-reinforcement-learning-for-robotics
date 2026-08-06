@@ -94,13 +94,16 @@ class BalanceBotEnv(gym.Env):
         actuator_right_motor="right_motor",
         left_wheel_joint="left_wheel_joint",
         right_wheel_joint="right_wheel_joint",
+        wheel_col_geom="wheel_left_col",
         chassis_trim_deg=0.0,
-        alive_bonus=1.0, 
+        alive_bonus=1.0,
+        integrator_leak=0.999,
         pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
         vel_penalty_coef=0.0,
         vel_penalty_cap=0.25,
-        yaw_penalty_coef=0.0,
+        cmd_pos_penalty_coef=0.0,
+        heading_penalty_coef=0.0,
         tip_threshold_deg=30.0,
         domain_rand=None,
     ):
@@ -121,17 +124,22 @@ class BalanceBotEnv(gym.Env):
             actuator_right_motor (str): MJCF name of the right motor actuator
             left_wheel_joint (str): MJCF name of the left wheel joint
             right_wheel_joint (str): MJCF name of the right wheel joint
+            wheel_col_geom (str): MJCF name of the wheel collision geometry (for looking up radius)
             chassis_trim_deg (float): Equilibrium lean angle in degrees, in the chassis frame. If 
                                     CoM is above the axle, this will be 0. If CoM is behind the 
                                     axle, this should be a positive value to denote a natural lean.
-            alive_bonus (float): Reward given each step the robot stays upright,
+            alive_bonus (float): Reward given each step the robot stays upright.
+            integrator_leak (float): Leaky-integrator coefficient for vel/pos/heading. 0.955 is
+                                     about 1 sec of "memory."
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
             vel_penalty_coef (float): Scales the forward/backward estimated velocity to
                                           discourage cruising to stay upright
             vel_penalty_cap (float): Bound the penalty for cruising
-            yaw_penalty_coef (float): Scales the abs(yaw_rate) penalty, discourages spinning around
-                                      the Z axis
+            cmd__pos_penalty_coef (float): Scales the penalty for moving off the origin (loose
+                                           approximation of "position" using accumulated commands)
+            heading_penalty_coef (float): Scales the penalty for spinning about the Z axis (heading
+                                          estimated via leaky integrator from gyroscope data)
             tip_threshold_deg (float): Angle (degrees) in which the robot is considered tipped
             domain_rand (DomainRandomConfig): Configuration for performing various domain
                                               randomizations (None to disable)
@@ -202,9 +210,9 @@ class BalanceBotEnv(gym.Env):
         self._right_gain_orig = float(self.model.actuator_gainprm[self.right_motor_id, 0])
 
         # Define observation space (i.e. what the agent can see) and limits
-        # [pitch, pitch rate, forward velocity estimate, yaw rate]
-        obs_low  = np.array([-np.pi, -20.0, -5.0, -20.0], dtype=np.float32)
-        obs_high = np.array([ np.pi, 20.0, 5.0, 20.0], dtype=np.float32)
+        # [pitch, pitch rate, fwd vel est, yaw rate, cmd pos est, heading est]
+        obs_low  = np.array([-np.pi, -20.0, -5.0, -20.0, -10.0, -np.pi*4], dtype=np.float32)
+        obs_high = np.array([ np.pi, 20.0, 5.0, 20.0, 10.0, np.pi*4], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
         # Define action space (i.e. what the agent can do) and limits, normalized to [-1, 1]
@@ -230,12 +238,16 @@ class BalanceBotEnv(gym.Env):
         # Reset simulationo
         mujoco.mj_resetData(self.model, self.data)
 
+        # Save leaky-integrator coefficient
+        self._integrator_leak = integrator_leak
+
         # Save reward coefficients
         self.alive_bonus = alive_bonus
         self.pitch_penalty_coef = pitch_penalty_coef
         self.action_penalty_coef = action_penalty_coef
         self.vel_penalty_coef = vel_penalty_coef
-        self.yaw_penalty_coef = yaw_penalty_coef
+        self.cmd_pos_penalty_coef = cmd_pos_penalty_coef
+        self.heading_penalty_coef = heading_penalty_coef
 
         # Save velocity penalty cap
         self.vel_penalty_cap = vel_penalty_cap
@@ -256,12 +268,22 @@ class BalanceBotEnv(gym.Env):
         self._action_delay = 0
         self._action_buffer = []
 
-        # Set initial pitch and velocity estimate
+        # Set initial pitch, velocity, position, and heading estimates
         self._pitch = 0.0
         self._vel_est = 0.0
+        self._heading_est = 0.0
+        self._cmd_vel = 0.0
+        self._cmd_pos = 0.0
+
+        # Set forward displacement tracker
+        self._fwd_disp_true = 0.0
 
         # Initialize the viewer
         self._viewer = None
+
+        # Get wheel radius
+        wheel_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, wheel_col_geom)
+        self._wheel_radius = float(self.model.geom_size[wheel_geom_id, 0])
 
         # Internal step counter
         self._step = 0
@@ -273,10 +295,10 @@ class BalanceBotEnv(gym.Env):
         Returns:
             np.ndarray: [pitch, pitch_rate]
         """
-        # Read raw IMU sensor data
+        # Read raw IMU sensor data. Note that +Y points down, so we negate the raw yaw rate reading.
         _, accel_y, accel_z = self.data.sensor(self.sensor_imu_accel).data
         pitch_rate = self.data.sensor(self.sensor_imu_gyro).data[0]
-        yaw_rate = self.data.sensor(self.sensor_imu_gyro).data[1]
+        yaw_rate = -1 * self.data.sensor(self.sensor_imu_gyro).data[1]
 
         # Accelerometer-derived pitch estimate
         accel_pitch = math.atan2(accel_z, -accel_y)
@@ -287,14 +309,26 @@ class BalanceBotEnv(gym.Env):
         self._pitch = self.alpha * (self._pitch + pitch_rate * self.model.opt.timestep) + \
                     (1 - self.alpha) * accel_pitch
 
+        # Get timestep and integrator leak
+        dt = self.model.opt.timestep
+        leak = self._integrator_leak
+
         # Forward acceleration estimate: Z axis accel - gravity component (account for tilt)
         a_fwd = accel_z - self._gravity_mag_orig * math.sin(self._pitch)
 
-        # Leaky integrator to estimate velocity. 0.995 lean = ~1 sec memory
-        self._vel_est = 0.995 * (self._vel_est + a_fwd * self.model.opt.timestep)
+        # Leaky integrator to estimate velocity (~1 sec memory at default leak)
+        self._vel_est = leak * (self._vel_est + (a_fwd * dt))
 
-        # Construct initial observation
-        obs = np.array([self._pitch, pitch_rate, self._vel_est, yaw_rate], dtype=np.float32)
+        # Leaky integrator to estimate heading (from yaw rate IMU measurement)
+        self._heading_est = leak * (self._heading_est + (yaw_rate * dt))
+
+        # Construct observation vector
+        obs = np.array([self._pitch, 
+                        pitch_rate, 
+                        self._vel_est, 
+                        yaw_rate, 
+                        self._cmd_pos,  # Computed in step(), as it needs the action values 
+                        self._heading_est], dtype=np.float32)
 
         # Optionally add Gaussian noise to observations
         if self.dr is not None:
@@ -373,9 +407,15 @@ class BalanceBotEnv(gym.Env):
             math.sin(self._eq_chassis_rad / 2), 0,
         ]
 
-        # Reset pitch (IMU frame) and velocity estimate
+        # Reset pitch (IMU frame), velocity, position, and heading estimate
         self._pitch = self._pitch_trim_rad
         self._vel_est = 0.0
+        self._heading_est = 0.0
+        self._cmd_vel = 0.0
+        self._cmd_pos = 0.0
+
+        # Set forward displacement tracker
+        self._fwd_disp_true = 0.0
 
         # Impart an initial angular velocity around the y axis so the agent learns to recover
         # Note: qvel[4] = wy (rad/s)
@@ -481,8 +521,24 @@ class BalanceBotEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         self._step += 1
 
+        # Command integration: estimate something proportional to position based on actions
+        # Note: do this before _get_obs(), as the pos estimate is used in the obs vector
+        dt = self.model.opt.timestep
+        cmd = 0.5 * (action[0] + action[1])
+        self._cmd_vel = self._integrator_leak * (self._cmd_vel + cmd * dt)
+        self._cmd_pos = self._integrator_leak * (self._cmd_pos + self._cmd_vel * dt)
+
+        # Get actual forward velocity (privileged info) by projecting world-frame velocity onto the
+        # chassis body frame X axis.
+        xmat = self.data.xmat[self._chassis_id].reshape(3, 3)
+        world_vel = self.data.cvel[self._chassis_id][3:6]
+        vel_actual = float(np.dot(world_vel, xmat[:, 0]))
+
         # Get observation
         obs = self._get_obs()
+
+        # Integrate the true forward velocity to get the forward displacement
+        self._fwd_disp_true = self._fwd_disp_true + (vel_actual * dt)
 
         # Ground-truth pitch from the framequat sensor (privileged info).
         w, x, y, z = self.data.sensor(self.sensor_imu_orientation).data
@@ -493,23 +549,45 @@ class BalanceBotEnv(gym.Env):
         # Figure out how far off the natural lean (pitch trim) we are
         pitch_error = pitch_true - self._pitch_trim_rad
 
-        # Reward function: alive - (A*pitch^2) - (B*action^2) - C*avg(vel_penalty) - D*abs(yaw)
+        # Reward function: alive - action - vel - pos - heading
         #   alive: reward for staying upright each step
         #   pitch: penalty for leaning (use privileged info, not observed pitch)
         #   action: penalty for jittery motor commands
-        #   vel_penalty: penalty for moving forward or backward (capped to a limit)
-        #   yaw: penalty for rotating around Z axis
+        #   vel: penalty for moving forward or backward (capped to a limit)
+        #   pos: penalty for moving off origin (estimated via command integrationo)
+        #   heading: penalty for turning (estimated via leaky integrator)
         pitch_penalty = self.pitch_penalty_coef * pitch_error**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
         vel_penalty = self.vel_penalty_coef * min(self._vel_est**2, self.vel_penalty_cap)
-        yaw_penalty = self.yaw_penalty_coef * abs(self.data.qvel[5])
-        reward = self.alive_bonus - pitch_penalty - action_penalty - vel_penalty - yaw_penalty
+        pos_penalty = self.cmd_pos_penalty_coef * self._cmd_pos**2
+        heading_penalty = self.heading_penalty_coef * self._heading_est**2
+        reward = self.alive_bonus - pitch_penalty - action_penalty - vel_penalty - \
+            pos_penalty - heading_penalty
 
         # Termination (if robot tips or we run out of time in the episode)
         terminated = abs(pitch_error) > math.radians(self.tip_threshold_deg)
         truncated = self._step >= self.max_steps
 
-        return obs, reward, terminated, truncated, {}
+        # Privileged ground truth: velocity as calculated from wheel motion
+        wheel_vel_l = self.data.sensor(self.sensor_left_wheel_vel).data[0]
+        wheel_vel_r = self.data.sensor(self.sensor_right_wheel_vel).data[0]
+        true_vel = 0.5 * (wheel_vel_l + wheel_vel_r) * self._wheel_radius
+
+        # Privileged ground truth: true heading (yaw) from orientation quaternion
+        qw, qx, qy, qz = self.data.qpos[3:7]
+        true_heading = math.atan2(2.0*(qw*qz + qx*qy), 1.0 - 2.0*(qy*qy + qz*qz))
+
+        # Construct info for logging
+        info = {
+            "estimator/cmd_pos_est": float(self._cmd_pos),
+            "estimator/cmd_pos_true": float(self._fwd_disp_true),
+            "estimator/vel_est": float(self._vel_est),
+            "estimator/vel_true": float(true_vel),
+            "estimator/heading_est": float(self._heading_est),
+            "estimator/heading_true": float(true_heading),
+        }
+
+        return obs, reward, terminated, truncated, info
 
     def render(self):
         """
