@@ -53,6 +53,7 @@ class DomainRandomConfig:
         ridge_torque_max_nm: Max random torque to apply to axles (N-m)
         gravity_tilt_max_deg: Maximum angle (degrees) between the gravity vector and straight down,
                               sampled uniformly in [0, max] each episode. Simulates sloped ground.
+        motor_deadband: Actions with abs() below this are zeroed
     """
     pitch_noise_std_dev: float = 0.0
     pitch_rate_noise_std_dev: float = 0.0
@@ -68,6 +69,7 @@ class DomainRandomConfig:
     ridge_prob: float = 0.0
     ridge_torque_max_nm: float = 0.0
     gravity_tilt_max_deg: float = 0.0
+    motor_deadband: float = 0.0
     
 
 class BalanceBotEnv(gym.Env):
@@ -97,7 +99,9 @@ class BalanceBotEnv(gym.Env):
         wheel_col_geom="wheel_left_col",
         chassis_trim_deg=0.0,
         alive_bonus=1.0,
-        integrator_leak=0.999,
+        vel_leak=0.995,
+        pos_leak=0.995,
+        heading_leak=1.0,
         pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
         vel_penalty_coef=0.0,
@@ -129,8 +133,12 @@ class BalanceBotEnv(gym.Env):
                                     CoM is above the axle, this will be 0. If CoM is behind the 
                                     axle, this should be a positive value to denote a natural lean.
             alive_bonus (float): Reward given each step the robot stays upright.
-            integrator_leak (float): Leaky-integrator coefficient for vel/pos/heading. 0.955 is
-                                     about 1 sec of "memory."
+            vel_leak (float): Leaky-integrator coefficient for velocity estimation. 0.955 is about 
+                              1 sec of "memory."
+            pos_leak (float): Leaky-integrator coefficient for position estimation. 0.955 is about 
+                              1 sec of "memory."
+            heading_leak (float): Leaky-integrator coefficient for heading estimation. 1.0 means no
+                                   leak (idefinite accumulation).
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
             vel_penalty_coef (float): Scales the forward/backward estimated velocity to
@@ -238,8 +246,10 @@ class BalanceBotEnv(gym.Env):
         # Reset simulationo
         mujoco.mj_resetData(self.model, self.data)
 
-        # Save leaky-integrator coefficient
-        self._integrator_leak = integrator_leak
+        # Save leaky-integrator coefficients
+        self._vel_leak = vel_leak
+        self._pos_leak = pos_leak
+        self._heading_leak = heading_leak
 
         # Save reward coefficients
         self.alive_bonus = alive_bonus
@@ -309,18 +319,17 @@ class BalanceBotEnv(gym.Env):
         self._pitch = self.alpha * (self._pitch + pitch_rate * self.model.opt.timestep) + \
                     (1 - self.alpha) * accel_pitch
 
-        # Get timestep and integrator leak
+        # Get timestep
         dt = self.model.opt.timestep
-        leak = self._integrator_leak
 
         # Forward acceleration estimate: Z axis accel - gravity component (account for tilt)
         a_fwd = accel_z - self._gravity_mag_orig * math.sin(self._pitch)
 
-        # Leaky integrator to estimate velocity (~1 sec memory at default leak)
-        self._vel_est = leak * (self._vel_est + (a_fwd * dt))
-
+        # Leaky integrator to estimate velocity
+        self._vel_est = self._vel_leak * (self._vel_est + (a_fwd * dt))
+ 
         # Leaky integrator to estimate heading (from yaw rate IMU measurement)
-        self._heading_est = leak * (self._heading_est + (yaw_rate * dt))
+        self._heading_est = self._heading_leak * (self._heading_est + (yaw_rate * dt))
 
         # Construct observation vector
         obs = np.array([self._pitch, 
@@ -473,6 +482,10 @@ class BalanceBotEnv(gym.Env):
             )
             action = np.clip(action + noise, -1.0, 1.0)
 
+        # Add motor deadband
+        if self.dr is not None and self.dr.motor_deadband > 0.0:
+            action = np.where(np.abs(action) < self.dr.motor_deadband, 0.0, action)
+
         # Set motors to given (normalized) duty cycle
         self.data.ctrl[self.left_motor_id]  = action[0]
         self.data.ctrl[self.right_motor_id] = action[1]
@@ -525,8 +538,8 @@ class BalanceBotEnv(gym.Env):
         # Note: do this before _get_obs(), as the pos estimate is used in the obs vector
         dt = self.model.opt.timestep
         cmd = 0.5 * (action[0] + action[1])
-        self._cmd_vel = self._integrator_leak * (self._cmd_vel + cmd * dt)
-        self._cmd_pos = self._integrator_leak * (self._cmd_pos + self._cmd_vel * dt)
+        self._cmd_vel = self._pos_leak * (self._cmd_vel + cmd * dt)
+        self._cmd_pos = self._pos_leak * (self._cmd_pos + self._cmd_vel * dt)
 
         # Get actual forward velocity (privileged info) by projecting world-frame velocity onto the
         # chassis body frame X axis.
