@@ -11,8 +11,8 @@
 // Each motor is its own single-byte register; there is no multi-byte
 // motor write like the Bala 2 uses.
 static const uint8_t BALAC_ADDR = 0x38;
-static const uint8_t REG_MOTOR_LEFT = 0x00;
-static const uint8_t REG_MOTOR_RIGHT = 0x01;
+static const uint8_t REG_MOTOR_RIGHT = 0x00;
+static const uint8_t REG_MOTOR_LEFT = 0x01;
 
 // The STM32 takes a signed 8-bit speed. We clamp to +/-127 (rather than -128)
 // to keep the forward and reverse ranges symmetric.
@@ -26,8 +26,8 @@ static const int16_t SPEED_MIN = -127;
 // Note this is the opposite of what M5Stack's BalaCplus.ino does, which sends
 // +power to the left and -power to the right. Their "positive power" therefore
 // means backward. See the porting note about negating the PID output.
-static const bool INVERT_LEFT_MOTOR = true;
-static const bool INVERT_RIGHT_MOTOR = false;
+static const bool INVERT_LEFT_MOTOR = false;
+static const bool INVERT_RIGHT_MOTOR = true;
 
 // ---------------------------------------------------------------------------
 // BalaC class

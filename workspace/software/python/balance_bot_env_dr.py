@@ -28,6 +28,9 @@ class DomainRandomConfig:
     ranges).
     
     Attributes:
+        init_pitch_range_deg: Start pitch uniformly within +/- this amount around the equilibrium
+                              pitch
+        init_pitch_rate_range: Initial pitch rate (rad/s) spread uniformly +/- this amount
         pitch_noise_std_dev: Standard deviation of Gaussian noise added to pitch observation. 
                              Simulates IMU noise.
         pitch_rate_noise_std_dev: Standard deviation of Gaussian noise added to pitch rate
@@ -55,6 +58,8 @@ class DomainRandomConfig:
                               sampled uniformly in [0, max] each episode. Simulates sloped ground.
         motor_deadband: Actions with abs() below this are zeroed
     """
+    init_pitch_range_deg: float = 0.0
+    init_pitch_rate_range: float = 0.0
     pitch_noise_std_dev: float = 0.0
     pitch_rate_noise_std_dev: float = 0.0
     yaw_rate_noise_std_dev: float = 0.0
@@ -403,14 +408,27 @@ class BalanceBotEnv(gym.Env):
         # Reset the simulator
         mujoco.mj_resetData(self.model, self.data)
 
-        # Start at equilibrium lean
+        # Start pose: equilibrium by default, add offset as per DR
+        start_chassis = self._eq_chassis_rad
+        if self.dr is not None and self.dr.init_pitch_range_deg > 0.0:
+            rng = math.radians(self.dr.init_pitch_range_deg)
+            start_chassis += self.np_random.uniform(-rng, rng)
         self.data.qpos[3:7] = [
-            math.cos(self._eq_chassis_rad / 2), 0,
-            math.sin(self._eq_chassis_rad / 2), 0,
+            math.cos(start_chassis / 2), 0,
+            math.sin(start_chassis / 2), 0,
         ]
 
-        # Reset pitch (IMU frame), velocity, position, and heading estimate
-        self._pitch = self._pitch_trim_rad
+        # Impart a small pitch rate change (or as per DR)
+        rate_range = 0.5
+        if self.dr is not None and self.dr.init_pitch_rate_range > 0.0:
+            rate_range = self.dr.init_pitch_rate_range
+        self.data.qvel[4] += self.np_random.uniform(-rate_range, rate_range)
+
+        # Reset pitch measurement (IMU frame) to the starting chassis angle. We invert this to
+        # translate from the chassis frame to the IMU frame.
+        self._pitch = -start_chassis
+
+        # Reset estimates
         self._heading_est = 0.0
         self._cmd_vel = 0.0
         self._cmd_pos = 0.0
