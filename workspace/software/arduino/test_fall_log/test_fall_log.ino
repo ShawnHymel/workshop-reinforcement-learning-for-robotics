@@ -6,7 +6,7 @@
 // Constants
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
 const float VEL_LEAK = 0.995;           // Integrator leak for estimating velocity from commands
-const float POS_LEAK = 0.995;           // Integrator leak for estimating position from velocity commands estimate
+const float POS_LEAK = 0.999;           // Integrator leak for estimating position from velocity commands estimate
 const float HEADING_LEAK = 1.0;         // Integrator leak for estimating heading from yaw rate
 const float TIMESTEP = 0.005f;          // Time (sec) between intervals
 const float TIP_THRESHOLD = 0.79f;      // radians (~45 deg), stop motors if exceeded

@@ -105,7 +105,7 @@ class BalanceBotEnv(gym.Env):
         chassis_trim_deg=0.0,
         alive_bonus=1.0,
         vel_leak=0.995,
-        pos_leak=0.995,
+        pos_leak=0.999,
         heading_leak=1.0,
         pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
@@ -138,10 +138,10 @@ class BalanceBotEnv(gym.Env):
                                     CoM is above the axle, this will be 0. If CoM is behind the 
                                     axle, this should be a positive value to denote a natural lean.
             alive_bonus (float): Reward given each step the robot stays upright.
-            vel_leak (float): Leaky-integrator coefficient for velocity estimation. 0.955 is about 
+            vel_leak (float): Leaky-integrator coefficient for velocity estimation. 0.995 is about 
                               1 sec of "memory."
-            pos_leak (float): Leaky-integrator coefficient for position estimation. 0.955 is about 
-                              1 sec of "memory."
+            pos_leak (float): Leaky-integrator coefficient for position estimation. 0.999 is about 
+                              5 sec of "memory."
             heading_leak (float): Leaky-integrator coefficient for heading estimation. 1.0 means no
                                    leak (idefinite accumulation).
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
@@ -224,8 +224,8 @@ class BalanceBotEnv(gym.Env):
 
         # Define observation space (i.e. what the agent can see) and limits
         # [pitch, pitch rate, fwd vel est, yaw rate, cmd pos est, heading est]
-        obs_low  = np.array([-np.pi, -20.0, -5.0, -20.0, -10.0, -np.pi*4], dtype=np.float32)
-        obs_high = np.array([ np.pi, 20.0, 5.0, 20.0, 10.0, np.pi*4], dtype=np.float32)
+        obs_low  = np.array([-np.pi, -20.0, -5.0, -20.0, -30.0, -np.pi*4], dtype=np.float32)
+        obs_high = np.array([ np.pi, 20.0, 5.0, 20.0, 30.0, np.pi*4], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
         # Define action space (i.e. what the agent can do) and limits, normalized to [-1, 1]
@@ -272,6 +272,10 @@ class BalanceBotEnv(gym.Env):
 
         # Save tip threshold
         self.tip_threshold_deg = tip_threshold_deg
+
+        # Save the original motor gains
+        self._left_gain_orig  = float(self.model.actuator_gainprm[self.left_motor_id, 0])
+        self._right_gain_orig = float(self.model.actuator_gainprm[self.right_motor_id, 0])
 
         # Number of steps to take before resetting the episode
         self.max_steps = max_steps
@@ -378,15 +382,16 @@ class BalanceBotEnv(gym.Env):
             )
             self.model.geom_friction[self._ground_id, 0] = scale * self._ground_friction_orig
 
-        # Optionally randomize motor gain
-        # TODO: add per-motor DR (i.e. model motor asymmetry)
+        # Optionally randomize each motor (simulate asymmetry)
         if self.dr is not None and self.dr.motor_gain_range != (1.0, 1.0):
-            scale = self.np_random.uniform(
-                self.dr.motor_gain_range[0],
-                self.dr.motor_gain_range[1],
+            scale_left = self.np_random.uniform(
+                self.dr.motor_gain_range[0], self.dr.motor_gain_range[1],
             )
-            self.model.actuator_gainprm[self.left_motor_id, 0]  = scale * self._left_gain_orig
-            self.model.actuator_gainprm[self.right_motor_id, 0] = scale * self._right_gain_orig
+            scale_right = self.np_random.uniform(
+                self.dr.motor_gain_range[0], self.dr.motor_gain_range[1],
+            )
+            self.model.actuator_gainprm[self.left_motor_id, 0]  = scale_left  * self._left_gain_orig
+            self.model.actuator_gainprm[self.right_motor_id, 0] = scale_right * self._right_gain_orig
 
         # Tilt gravity to simulate a sloped/uneven floor. Equivalent to tilting the
         # ground, but keeps contact on a clean flat plane.

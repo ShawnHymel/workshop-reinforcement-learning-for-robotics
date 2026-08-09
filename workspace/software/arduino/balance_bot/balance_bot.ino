@@ -5,34 +5,34 @@
 #include "balac.h"
 
 // Settings
-#define DEBUG 1                         // Enable debug printing on intervals (can affect motion!)
+#define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
 #define LOAD_IMU_CALIB 0                // 0 to disable loading calibration data from NVS
-const float PITCH_OFFSET = 0.00f;       // Tune this so the robot stays balanced (+: back bias, -: front bias)
-const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
+const float PITCH_OFFSET = -0.058f;     // Tune this so the robot stays balanced (+: back bias, -: front bias)
+const float MOTOR_BOOST = 0.6f;         // Tune this so the motors are responsive on battery power
 const float MOTOR_TRIM_LEFT = 1.0f;     // The hobby motors are asymmetric. Adjust that here.
-const float MOTOR_TRIM_RIGHT = 0.6f;    // The hobby motors are asymmetric. Adjust that here.
+const float MOTOR_TRIM_RIGHT = 1.0f;    // The hobby motors are asymmetric. Adjust that here.
 const float ACTION_DEADBAND = 0.0f;     // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.0f;        // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
-const float VEL_LEAK = 0.995;           // Integrator leak for estimating velocity from commands
-const float POS_LEAK = 0.995;           // Integrator leak for estimating position from velocity commands estimate
-const float HEADING_LEAK = 1.0;         // Integrator leak for estimating heading from yaw rate
+const float VEL_LEAK = 0.995f;           // Integrator leak for estimating velocity from commands
+const float POS_LEAK = 0.999f;             // Integrator leak for estimating position from velocity commands estimate
+const float HEADING_LEAK = 1.0f;         // Integrator leak for estimating heading from yaw rate
+const float PITCH_INIT = -0.199f;        // Initial pitch measurement (helps comp filter converge to eq faster)
 const float TIMESTEP = 0.005f;          // Time (sec) between intervals
-const float MOTOR_SCALE = 127.0f;      // Scale motors from [-1, 1] to [-127, 127]
+const float MOTOR_SCALE = 127.0f;       // Scale motors from [-1, 1] to [-127, 127]
 const float TIP_THRESHOLD = 0.79f;      // radians (~45 deg), stop motors if exceeded
-const int16_t MOTOR_DIR_LEFT = 1;      // Left motor direction
-const int16_t MOTOR_DIR_RIGHT = 1;     // Right motor direction
 const unsigned long RESET_TIME_MS = 1000; // How long to wait before running again
 
 // Globals
 BalaC balac;
-float pitch = 0.0f;
+float pitch = PITCH_INIT;
 float cmd_vel = 0.0f;  
 float cmd_pos = 0.0f;
 float heading_est = 0.0f; 
 float yaw_rate = 0.0f;
 bool tipped = false;
 float action_filtered[2] = {0.0f, 0.0f};
+int timestep = 0;
 
 void setup() {
   bool m5_ret;
@@ -72,7 +72,6 @@ void setup() {
 
 void loop() {
   float action[ACTOR_ACTION_SIZE];
-  static int print_counter = 0;
 
   // Get timestamp for pacing to timestep interval
   unsigned long step_start = micros();
@@ -136,11 +135,9 @@ void loop() {
     cmd_pos = POS_LEAK * (cmd_pos + cmd_vel * TIMESTEP);
 
     // Calculate actual motor values from normalized values (boost if needed)
-    int16_t motor_left = MOTOR_DIR_LEFT * 
-                          (int16_t)(action_motors[0] * 
+    int16_t motor_left =  (int16_t)(action_motors[0] * 
                           MOTOR_SCALE * MOTOR_TRIM_LEFT * MOTOR_BOOST);
-    int16_t motor_right = MOTOR_DIR_RIGHT * 
-                          (int16_t)(action_motors[1] * 
+    int16_t motor_right = (int16_t)(action_motors[1] * 
                           MOTOR_SCALE * MOTOR_TRIM_RIGHT * MOTOR_BOOST);
 
     // Set motor speed based on inference results
@@ -148,14 +145,16 @@ void loop() {
 
     // Print diagnostics every few iterations
 #if DEBUG
-  if (++print_counter >= 20) {
-    print_counter = 0;
+  if (timestep % 20 == 0) {
     int32_t batt_lvl = M5.Power.getBatteryLevel();
     int16_t batt_mv = M5.Power.getBatteryVoltage();
-    Serial.printf("batt=%d pitch=%.3f rate=%.3f cmd_vel=%.3f cmd_pos=%.3f yaw=%.3f head=%.3f action[0]=%.3f action[1]=%.3f tip=%d\n",
-                    batt_mv, pitch, pitch_rate, cmd_vel, cmd_pos, yaw_rate, heading_est, action[0], action[1], (int)tipped);
+    Serial.printf("t=%d pitch=%.3f rate=%.3f cmd_vel=%.3f cmd_pos=%.3f yaw=%.3f head=%.3f action[0]=%.3f action[1]=%.3f tip=%d\n",
+                    timestep, batt_mv, pitch, pitch_rate, cmd_vel, cmd_pos, yaw_rate, heading_est, action[0], action[1], (int)tipped);
   }
 #endif
+
+  // Increment timestep counter
+  timestep++;
   
   // If tipped, shut off motors and wait to be turned upright
   } else {
@@ -165,15 +164,18 @@ void loop() {
       tipped = false;
 
       // Reset the tip sensor pitch and filters
-      pitch = 0.0f;
+      pitch = PITCH_INIT;
       action_filtered[0] = 0.0f;
       action_filtered[1] = 0.0f;
 
-      // reset the accumulators
+      // Reset the accumulators
       cmd_vel = 0.0f;
       cmd_pos = 0.0f;
       heading_est = 0.0f;
       yaw_rate = 0.0f;
+
+      // Reset the timestep counter
+      timestep = 0;
 
       // Wait a moment before starting
       Serial.printf("Untipped! Starting in %lu seconds\n", RESET_TIME_MS / 1000);
@@ -184,4 +186,5 @@ void loop() {
 
   // Pace to TIMESTEP before printing
   while (micros() - step_start < (unsigned long)(TIMESTEP * 1e6f));
+  //Serial.println(micros() - step_start);
 }
