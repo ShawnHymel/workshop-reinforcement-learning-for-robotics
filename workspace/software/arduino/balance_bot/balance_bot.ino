@@ -7,7 +7,7 @@
 // Settings
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
 #define LOAD_IMU_CALIB 0                // 0 to disable loading calibration data from NVS
-const float PITCH_OFFSET = -0.058f;     // Tune this so the robot stays balanced (+: back bias, -: front bias)
+const float PITCH_OFFSET = -0.03f;     // Tune this so the robot stays balanced (+: back bias, -: front bias)
 const float MOTOR_BOOST = 0.6f;         // Tune this so the motors are responsive on battery power
 const float MOTOR_TRIM_LEFT = 1.0f;     // The hobby motors are asymmetric. Adjust that here.
 const float MOTOR_TRIM_RIGHT = 1.0f;    // The hobby motors are asymmetric. Adjust that here.
