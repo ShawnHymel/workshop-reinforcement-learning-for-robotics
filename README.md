@@ -2,7 +2,7 @@
 
 Welcome to the Reinforcement Learning for Robotics workshop! We will work through the basics of converting a 3D CAD model of a robot to simulation, train a reinforcement learning (RL) agent using the PPO algorithm, and then deploy it to a real robot.
 
-? If you are looking for the YouTube video series version of this demo, please use this repository: [github.com/ShawnHymel/reinforcement-learning-for-robotics](https://github.com/ShawnHymel/reinforcement-learning-for-robotics)
+> If you are looking for the YouTube video series version of this demo, please use this repository: [github.com/ShawnHymel/reinforcement-learning-for-robotics](https://github.com/ShawnHymel/reinforcement-learning-for-robotics)
 
 To dive deeper, I recommend checking out my full Reinforcement Learning for Robotics video series [here](https://www.youtube.com/watch?v=zsdceSTRBl4&list=PLYExBrZNJeQg&index=1).
 
