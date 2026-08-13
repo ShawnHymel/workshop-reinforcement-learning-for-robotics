@@ -77,7 +77,7 @@ In the *Library Manager*, search for and install the following libraries:
 
 Connect the balance bot to your computer using a USB cable. Upload the *balance_bot.ino* sketch to the robot. Once complete, unplug the USB cable from the robot, carefully set the robot upright on a smooth, level surface, and let it go.
 
-> The M5Stack Bala-C does not include encoders on the motors or wheels. As a result, it will struggle to stay upright in one place. The 3-phase training cycle does a decent job at including estimated position and heading information, but it's far form perfect. The more expensive [Bala2 Fire](https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752) includes encoders and does a much better job at balancing. I use the Bala2 Fire in the video series for this reason.
+> **Note**: The M5Stack Bala-C does not include encoders on the motors or wheels. As a result, it will struggle to stay upright in one place. The 3-phase training cycle does a decent job at including estimated position and heading information, but it's far form perfect. The more expensive [Bala2 Fire](https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752) includes encoders and does a much better job at balancing. I use the Bala2 Fire in the video series for this reason.
 
 ## License
 
