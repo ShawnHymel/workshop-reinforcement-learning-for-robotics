@@ -28,6 +28,7 @@ Changes:
 # Import standard libraries
 import os
 import random
+import sys
 import time
 from dataclasses import dataclass
 from collections import deque
@@ -571,7 +572,11 @@ def train(config: PPOConfig, envs=None, agent=None):
     # Assign a name for the run
     run_name = f"{config.env_id}__{config.exp_name}__{config.seed}__{int(time.time())}"
     print(f"Run name: {run_name}")
-    print(f"TensorBoard: http://localhost:6006/#scalars&regexFilter={config.exp_name}")
+    if "google.colab" in sys.modules:
+        print("TensorBoard: see the TensorBoard panel in the cell above "
+            "(click refresh to update)")
+    else:
+        print(f"TensorBoard: http://localhost:6006/#scalars&regexFilter={config.exp_name}")
 
     # Ensure that if a vector of custom environments is passed in, the num_envs parameter reflects
     # that number
@@ -716,16 +721,6 @@ def train(config: PPOConfig, envs=None, agent=None):
                         # Add to returns
                         if config.checkpoint_interval is not None:
                             recent_returns.append(float(episodic_return))
-
-            # Estimator diagnostics: auto-log any "estimator/" key the env emits. Skip keys that
-            # start with the prefix "_"
-            if global_step % 1000 == 0:
-                for key, val in infos.items():
-                    if not key.startswith("estimator/"):
-                        continue
-                    if key.startswith("_"):
-                        continue
-                    writer.add_scalar(key, float(np.nanmean(val)), global_step)
 
         # Compute returns for each timestep for each environment. Some terminology:
         #   value[t]: critic's predicted total, discounted rewards looking forward from step t
