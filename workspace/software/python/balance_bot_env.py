@@ -89,6 +89,9 @@ class BalanceBotEnv(gym.Env):
         sensor_imu_gyro="imu_gyro",
         sensor_left_wheel_vel="left_wheel_vel",
         sensor_right_wheel_vel="right_wheel_vel",
+        sensor_left_wheel_pos="left_wheel_pos",
+        sensor_right_wheel_pos="right_wheel_pos",
+        encoder_ticks_per_rev=None,
         actuator_left_motor="left_motor",
         actuator_right_motor="right_motor",
         left_wheel_joint="left_wheel_joint",
@@ -114,6 +117,10 @@ class BalanceBotEnv(gym.Env):
             sensor_imu_gyro (str): MJCF name of the IMU gyroscope sensor
             sensor_left_wheel_vel (str): MJCF name of the left wheel velocity sensor
             sensor_right_wheel_vel (str): MJCF name of the right wheel velocity sensor
+            sensor_left_wheel_pos (str): MJCF name of the left wheel position (encoder) sensor
+            sensor_right_wheel_pos (str): MJCF name of the right wheel position (encoder) sensor
+            encoder_ticks_per_rev (int or None): If set, compute wheel velocity from whole encoder
+                                                 ticks like the real encoders (None = ideal)
             actuator_left_motor (str): MJCF name of the left motor actuator
             actuator_right_motor (str): MJCF name of the right motor actuator
             left_wheel_joint (str): MJCF name of the left wheel joint
@@ -176,6 +183,9 @@ class BalanceBotEnv(gym.Env):
         self.sensor_imu_gyro = sensor_imu_gyro
         self.sensor_left_wheel_vel = sensor_left_wheel_vel
         self.sensor_right_wheel_vel = sensor_right_wheel_vel
+        self.sensor_left_wheel_pos = sensor_left_wheel_pos
+        self.sensor_right_wheel_pos = sensor_right_wheel_pos
+        self.encoder_ticks_per_rev = encoder_ticks_per_rev
 
         # Get ID of actuators from MJCF names
         self.left_motor_id = mujoco.mj_name2id(
@@ -232,6 +242,8 @@ class BalanceBotEnv(gym.Env):
         # Set initial pitch state
         self._pitch = 0.0
         self._pitch_bias = 0.0
+        self._prev_ticks = np.zeros(2)
+        self._tick_phase = np.zeros(2)
 
         # Initialize the viewer
         self._viewer = None
@@ -259,9 +271,26 @@ class BalanceBotEnv(gym.Env):
         self._pitch = self.alpha * (self._pitch + pitch_rate * self.model.opt.timestep) + \
                     (1 - self.alpha) * accel_pitch
 
-        # Read wheel velocities from sensors
-        wheel_vel_left  = self.data.sensor(self.sensor_left_wheel_vel).data[0]
-        wheel_vel_right = self.data.sensor(self.sensor_right_wheel_vel).data[0]
+        # Use either simulated encoders or ideal wheel velocities
+        if self.encoder_ticks_per_rev:
+            # Convert wheel angles (rad) to whole encoder ticks, like the real encoders. The
+            # per-episode phase offset places the tick boundaries randomly, since a real robot
+            # doesn't start exactly on a tick edge.
+            rad_per_tick = 2.0 * np.pi / self.encoder_ticks_per_rev
+            wheel_pos = np.array([
+                self.data.sensor(self.sensor_left_wheel_pos).data[0],
+                self.data.sensor(self.sensor_right_wheel_pos).data[0],
+            ])
+            ticks = np.floor(wheel_pos / rad_per_tick + self._tick_phase)
+
+            # Velocity from the tick change over one timestep (same math as the firmware)
+            wheel_vel = (ticks - self._prev_ticks) * rad_per_tick / self.model.opt.timestep
+            wheel_vel_left, wheel_vel_right = wheel_vel
+            self._prev_ticks = ticks
+        else:
+            # Ideal (continuous) wheel velocities
+            wheel_vel_left  = self.data.sensor(self.sensor_left_wheel_vel).data[0]
+            wheel_vel_right = self.data.sensor(self.sensor_right_wheel_vel).data[0]
 
         # Construct initial observation
         obs = np.array([
@@ -356,6 +385,10 @@ class BalanceBotEnv(gym.Env):
 
         # Reset pitch
         self._pitch = 0.0
+
+        # Reset encoder tracking with a random tick-boundary phase for each wheel
+        self._tick_phase = self.np_random.uniform(0.0, 1.0, size=2)
+        self._prev_ticks = np.floor(self._tick_phase)
 
         # Impart an initial angular velocity around the y axis so the agent learns to recover
         # Note: qvel[4] = wy (rad/s)
