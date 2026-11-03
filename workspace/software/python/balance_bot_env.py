@@ -50,6 +50,8 @@ class DomainRandomConfig:
         ridge_prob: Probability of applying a random torque to the wheel axles to simulate the tire
                     ridges hitting the ground
         ridge_torque_max_nm: Max random torque to apply to axles (N-m)
+        pitch_bias_max: +/- constant offset added to pitch obs per episode (rad)
+        com_offset_x_max_m: +/- forward/back shift of chassis CoM per episode (m)
     """
     pitch_noise_std_dev: float = 0.0
     pitch_rate_noise_std_dev: float = 0.0
@@ -64,6 +66,8 @@ class DomainRandomConfig:
     motor_gain_range: tuple = (1.0, 1.0)
     ridge_prob: float = 0.0
     ridge_torque_max_nm: float = 0.0
+    pitch_bias_max: float = 0.0
+    com_offset_x_max_m: float = 0.0
     
 
 class BalanceBotEnv(gym.Env):
@@ -190,6 +194,7 @@ class BalanceBotEnv(gym.Env):
         self._ground_friction_orig = float(self.model.geom_friction[self._ground_id, 0])
         self._left_gear_orig = float(self.model.actuator_gear[self.left_motor_id, 0])
         self._right_gear_orig = float(self.model.actuator_gear[self.right_motor_id, 0])
+        self._chassis_ipos_orig = self.model.body_ipos[self._chassis_id].copy()
 
         # Define observation space (i.e. what the agent can see) and limits
         # [pitch, pitch_rate, wheel_vel_left, wheel_vel_right]
@@ -226,6 +231,7 @@ class BalanceBotEnv(gym.Env):
 
         # Set initial pitch state
         self._pitch = 0.0
+        self._pitch_bias = 0.0
 
         # Initialize the viewer
         self._viewer = None
@@ -258,7 +264,12 @@ class BalanceBotEnv(gym.Env):
         wheel_vel_right = self.data.sensor(self.sensor_right_wheel_vel).data[0]
 
         # Construct initial observation
-        obs = np.array([self._pitch, pitch_rate, wheel_vel_left, wheel_vel_right], dtype=np.float32)
+        obs = np.array([
+            self._pitch + self._pitch_bias, 
+            pitch_rate, 
+            wheel_vel_left, 
+            wheel_vel_right
+        ], dtype=np.float32)
 
         # Optionally add Gaussian noise to observations
         if self.dr is not None:
@@ -318,6 +329,22 @@ class BalanceBotEnv(gym.Env):
             )
             self.model.actuator_gear[self.left_motor_id, 0] = scale * self._left_gear_orig
             self.model.actuator_gear[self.right_motor_id, 0] = scale * self._right_gear_orig
+
+        # Optionally shift the chassis center of mass forward/back
+        self.model.body_ipos[self._chassis_id] = self._chassis_ipos_orig
+        if self.dr is not None and self.dr.com_offset_x_max_m > 0.0:
+            self.model.body_ipos[self._chassis_id, 0] += self.np_random.uniform(
+                -self.dr.com_offset_x_max_m,
+                self.dr.com_offset_x_max_m,
+            )
+
+        # Optionally sample a constant pitch sensor bias for this episode
+        self._pitch_bias = 0.0
+        if self.dr is not None and self.dr.pitch_bias_max > 0.0:
+            self._pitch_bias = self.np_random.uniform(
+                -self.dr.pitch_bias_max,
+                self.dr.pitch_bias_max,
+            )
 
         # Clear any applied forces
         self.data.xfrc_applied[self._chassis_id, :] = 0.0
@@ -434,7 +461,9 @@ class BalanceBotEnv(gym.Env):
 
         # Get observation
         obs = self._get_obs()
-        pitch = obs[0]
+
+        # True filtered pitch (no bias/noise) for reward and termination
+        pitch = self._pitch
 
         # Get the position of the robot in the world frame (privileged information)
         x_pos = self.data.qpos[0]
