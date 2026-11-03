@@ -246,6 +246,25 @@ class Agent(nn.Module):
         # and one entropy value per environment rather than one per action dimension.
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
+    def set_action_std(self, std):
+        """
+        Set the exploration noise (standard deviation of the action distribution) for every
+        action. Useful when warm-starting into a harder environment (e.g. new domain
+        randomization), since training shrinks the noise and a near-deterministic policy
+        adapts slowly. Does not change the learned mean action.
+
+        Args:
+            std (float): New standard deviation (> 0) for all action dimensions
+        """
+        if std <= 0:
+            raise ValueError(f"std must be positive, got {std}")
+        with torch.no_grad():
+            self.actor_logstd.fill_(float(np.log(std)))
+
+    def get_action_std(self):
+        """Return the current exploration noise standard deviation for each action."""
+        with torch.no_grad():
+            return torch.exp(self.actor_logstd).flatten().cpu().numpy()
 
 #-------------------------------------------------------------------------------
 # Training results
