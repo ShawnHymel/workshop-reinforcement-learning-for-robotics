@@ -23,6 +23,7 @@ Changes:
  * Replaced cleanrl_utils.evaluate with a self-contained evaluate() function to remove the external 
    dependency.
  * Reorganized and added comments to make the implementation easier to understand.
+ * Added optional value bootstrapping on time-limit truncation.
 """
 
 # Import standard libraries
@@ -124,6 +125,8 @@ class PPOConfig:
     """the maximum norm for the gradient clipping"""
     target_kl: float = None
     """the target KL divergence threshold"""
+    bootstrap_truncation: bool = True
+    """bootstrap the value of episodes cut off by a time limit. False is the original CleanRL."""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -640,6 +643,17 @@ def train(config: PPOConfig, envs=None, agent=None):
     assert isinstance(envs.single_action_space, gym.spaces.Box), \
         "only continuous action space is supported"
 
+    # Bootstrapping on truncation needs the episode's final observation, which next_obs holds
+    # only under next-step autoreset.
+    bootstrap_truncation = config.bootstrap_truncation
+    autoreset_mode = envs.metadata.get("autoreset_mode", None)
+    if bootstrap_truncation and autoreset_mode is not None:
+        mode_name = getattr(autoreset_mode, "name", str(autoreset_mode))
+        if "NEXT_STEP" not in mode_name.upper():
+            print(f"WARNING: bootstrap_truncation requires next-step autoreset, but the envs use "
+                  f"{mode_name}. Disabling bootstrap_truncation for this run.")
+            bootstrap_truncation = False
+
     # Create a fresh agent or warm-start from a provided one
     if agent is None:
         agent = Agent(envs, config).to(device)
@@ -698,6 +712,17 @@ def train(config: PPOConfig, envs=None, agent=None):
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs = torch.Tensor(next_obs).to(device)
             next_done = torch.Tensor(next_done).to(device)
+
+            # Bootstrap time-limit truncations: an episode cut off by a time limit (rather than a
+            # true terminal state) would have kept earning reward. Add the discounted value of the
+            # final observation to the reward so the critic isn't told the future is worth 0.
+            if bootstrap_truncation:
+                trunc_only = np.logical_and(truncations, np.logical_not(terminations))
+                if trunc_only.any():
+                    with torch.no_grad():
+                        final_values = agent.get_value(next_obs).flatten()
+                    trunc_mask = torch.tensor(trunc_only, dtype=torch.float32, device=device)
+                    rewards[step] += config.gamma * final_values * trunc_mask
 
             # With custom envs, render the state of the first env if render_mode="human"
             if render:
