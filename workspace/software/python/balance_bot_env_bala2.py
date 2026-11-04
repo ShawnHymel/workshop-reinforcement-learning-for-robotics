@@ -8,6 +8,7 @@ Date: May 13, 2026
 """
 
 # Standard libraries
+from collections import deque
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -96,6 +97,7 @@ class BalanceBotEnv(gym.Env):
         sensor_right_wheel_pos="right_wheel_pos",
         encoder_ticks_per_rev=None,
         wheel_pos_limit=10.0,
+        wheel_vel_window=1,
         actuator_left_motor="left_motor",
         actuator_right_motor="right_motor",
         left_wheel_joint="left_wheel_joint",
@@ -128,6 +130,8 @@ class BalanceBotEnv(gym.Env):
                                                  ticks like the real encoders (None = ideal)
             wheel_pos_limit (float): Clip the wheel position observation to +/- this many radians
                                      (10 rad is about 22 cm of travel). Must match the firmware.
+            wheel_vel_window (int): Compute quantized wheel velocity over this many steps
+                                    (tick change / (window * timestep)). Must match the firmware.
             actuator_left_motor (str): MJCF name of the left motor actuator
             actuator_right_motor (str): MJCF name of the right motor actuator
             left_wheel_joint (str): MJCF name of the left wheel joint
@@ -196,6 +200,8 @@ class BalanceBotEnv(gym.Env):
         self.sensor_right_wheel_pos = sensor_right_wheel_pos
         self.encoder_ticks_per_rev = encoder_ticks_per_rev
         self.wheel_pos_limit = wheel_pos_limit
+        self.wheel_vel_window = wheel_vel_window
+        self._tick_hist = deque(maxlen=wheel_vel_window)
 
         # Get ID of actuators from MJCF names
         self.left_motor_id = mujoco.mj_name2id(
@@ -301,8 +307,10 @@ class BalanceBotEnv(gym.Env):
             rad_per_tick = 2.0 * np.pi / self.encoder_ticks_per_rev
             ticks = np.floor(wheel_pos / rad_per_tick + self._tick_phase)
 
-            # Velocity from the tick change over one timestep (same math as the firmware)
-            wheel_vel = (ticks - self._prev_ticks) * rad_per_tick / self.model.opt.timestep
+            # Velocity from the tick change over the last N steps (same math as the firmware)
+            wheel_vel = (ticks - self._tick_hist[0]) * rad_per_tick / \
+                        (self.wheel_vel_window * self.model.opt.timestep)
+            self._tick_hist.append(ticks)
             self._prev_ticks = ticks
 
             # Position from the tick count. Ticks start at 0 after reset, like ClearEncoder()
@@ -420,6 +428,10 @@ class BalanceBotEnv(gym.Env):
         # Reset encoder tracking with a random tick-boundary phase for each wheel
         self._tick_phase = self.np_random.uniform(0.0, 1.0, size=2)
         self._prev_ticks = np.floor(self._tick_phase)
+
+        # Fill the velocity window with the starting tick count (like the firmware's history)
+        self._tick_hist = deque([np.floor(self._tick_phase)] * self.wheel_vel_window,
+            maxlen=self.wheel_vel_window)
 
         # Impart an initial angular velocity around the y axis so the agent learns to recover
         # Note: qvel[4] = wy (rad/s)
