@@ -6,9 +6,10 @@
 
 // Settings
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
-const float PITCH_OFFSET = 0.0f;      // Tune this so the robot stays upright (+: back bias, -: front bias)
+const float PITCH_OFFSET = 0.0f;        // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
 const float WHEEL_POS_LIMIT = 10.0f;    // Must match wheel_pos_limit in training (rad)
+const int VEL_WINDOW = 8;               // Must match wheel_vel_window in training
 const float ACTION_DEADBAND = 0.0f;     // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.0f;        // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
@@ -30,6 +31,9 @@ Bala bala;
 float pitch = 0.0f;
 int32_t prev_enc_left = 0;
 int32_t prev_enc_right = 0;
+int32_t enc_hist_left[VEL_WINDOW] = {0};
+int32_t enc_hist_right[VEL_WINDOW] = {0};
+int enc_hist_idx = 0;
 bool tipped = false;
 float action_filtered[2] = {0.0f, 0.0f};
 
@@ -38,6 +42,15 @@ float read_accel_pitch() {
   M5.Imu.update();
   auto d = M5.Imu.getImuData();
   return -atan2f(d.accel.y, d.accel.z);
+}
+
+// Clear the encoder history used for windowed velocity (call after ClearEncoder())
+void reset_enc_history() {
+  for (int i = 0; i < VEL_WINDOW; i++) {
+    enc_hist_left[i] = 0;
+    enc_hist_right[i] = 0;
+  }
+  enc_hist_idx = 0;
 }
 
 void setup() {
@@ -71,6 +84,7 @@ void setup() {
 
   // Zero encoders and initialize pitch right before control starts (matches sim reset)
   bala.ClearEncoder();
+  reset_enc_history();
   prev_enc_left = 0;
   prev_enc_right = 0;
   pitch = read_accel_pitch();
@@ -101,13 +115,14 @@ void loop() {
   enc_left = ENC_DIR_LEFT * enc_left;
   enc_right = ENC_DIR_RIGHT * enc_right;
 
-  // Compute wheel velocities
-  int32_t delta_enc_left  = enc_left  - prev_enc_left;
-  int32_t delta_enc_right = enc_right - prev_enc_right;
-  prev_enc_left  = enc_left;
-  prev_enc_right = enc_right;
-  float wheel_vel_left  = (float)delta_enc_left  * ENC_TICKS_TO_RADS / TIMESTEP;
-  float wheel_vel_right = (float)delta_enc_right * ENC_TICKS_TO_RADS / TIMESTEP;
+  // Wheel velocity over the last VEL_WINDOW steps (matches training)
+  int32_t old_left  = enc_hist_left[enc_hist_idx];
+  int32_t old_right = enc_hist_right[enc_hist_idx];
+  enc_hist_left[enc_hist_idx]  = enc_left;
+  enc_hist_right[enc_hist_idx] = enc_right;
+  enc_hist_idx = (enc_hist_idx + 1) % VEL_WINDOW;
+  float wheel_vel_left  = (float)(enc_left  - old_left)  * ENC_TICKS_TO_RADS / (VEL_WINDOW * TIMESTEP);
+  float wheel_vel_right = (float)(enc_right - old_right) * ENC_TICKS_TO_RADS / (VEL_WINDOW * TIMESTEP);
 
   // Average wheel angle since reset (forward travel), clipped like in training
   float wheel_pos = 0.5f * (float)(enc_left + enc_right) * ENC_TICKS_TO_RADS;
@@ -175,6 +190,7 @@ void loop() {
 
       // Zero encoders and initialize pitch right before control resumes (matches sim reset)
       bala.ClearEncoder();
+      reset_enc_history();
       prev_enc_left = 0;
       prev_enc_right = 0;
       pitch = read_accel_pitch();

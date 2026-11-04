@@ -110,6 +110,7 @@ class BalanceBotEnv(gym.Env):
         yaw_penalty_coef=0.0,
         action_rate_penalty_coef=0.0,
         tip_threshold_deg=30.0,
+        max_drift_m=None,
         domain_rand=None,
     ):
         """
@@ -148,6 +149,8 @@ class BalanceBotEnv(gym.Env):
             action_rate_penalty_coef (float): Scales the sum((action - prev_action)^2) penalty,
                                               discourages rapid changes in motor commands
             tip_threshold_deg (float): Angle (degrees) in which the robot is considered tipped
+            max_drift_m (float or None): End the episode (as a failure) if the robot drifts
+                                         farther than this from its start (None = no limit)
             domain_rand (DomainRandomConfig): Configuration for performing various domain
                                               randomizations (None to disable)
         """
@@ -245,6 +248,9 @@ class BalanceBotEnv(gym.Env):
 
         # Save tip threshold
         self.tip_threshold_deg = tip_threshold_deg
+
+        # Save max drift
+        self.max_drift_m = max_drift_m
 
         # Number of steps to take before resetting the episode
         self.max_steps = max_steps
@@ -600,8 +606,12 @@ class BalanceBotEnv(gym.Env):
         # Store the previous action
         self._prev_action = policy_action
 
-        # Termination (if robot tips or we run out of time in the episode)
+        # Termination (if robot tips or drifts too far)
         terminated = abs(pitch) > math.radians(self.tip_threshold_deg)
+        if self.max_drift_m is not None and math.hypot(x_pos, y_pos) > self.max_drift_m:
+            terminated = True
+
+        # Truncation (if we run out of time in the episode)
         truncated = self._step >= self.max_steps
 
         return obs, reward, terminated, truncated, {}
