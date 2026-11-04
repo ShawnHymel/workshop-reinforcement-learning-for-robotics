@@ -8,6 +8,7 @@
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
 const float PITCH_OFFSET = 0.0f;      // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
+const float WHEEL_POS_LIMIT = 10.0f;    // Must match wheel_pos_limit in training (rad)
 const float ACTION_DEADBAND = 0.0f;     // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.0f;        // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
@@ -32,6 +33,13 @@ int32_t prev_enc_right = 0;
 bool tipped = false;
 float action_filtered[2] = {0.0f, 0.0f};
 
+// Read the accelerometer-only pitch estimate (used to initialize the complementary filter)
+float read_accel_pitch() {
+  M5.Imu.update();
+  auto d = M5.Imu.getImuData();
+  return -atan2f(d.accel.y, d.accel.z);
+}
+
 void setup() {
   bool m5_ret;
 
@@ -54,15 +62,18 @@ void setup() {
   }
   Serial.println("IMU calibration loaded");
 
-  // Zero out encoders
-  bala.ClearEncoder();
-
   // Stop motors
   bala.SetSpeed(0, 0);
 
   // Wait to start
   Serial.printf("Starting in %lu seconds, place robot upright\n", RESET_TIME_MS / 1000);
   delay(RESET_TIME_MS);
+
+  // Zero encoders and initialize pitch right before control starts (matches sim reset)
+  bala.ClearEncoder();
+  prev_enc_left = 0;
+  prev_enc_right = 0;
+  pitch = read_accel_pitch();
   Serial.println("Running...");
 }
 
@@ -98,6 +109,10 @@ void loop() {
   float wheel_vel_left  = (float)delta_enc_left  * ENC_TICKS_TO_RADS / TIMESTEP;
   float wheel_vel_right = (float)delta_enc_right * ENC_TICKS_TO_RADS / TIMESTEP;
 
+  // Average wheel angle since reset (forward travel), clipped like in training
+  float wheel_pos = 0.5f * (float)(enc_left + enc_right) * ENC_TICKS_TO_RADS;
+  wheel_pos = constrain(wheel_pos, -WHEEL_POS_LIMIT, WHEEL_POS_LIMIT);
+
   // Check if tipped
   if (fabsf(pitch) > TIP_THRESHOLD) {
     tipped = true;
@@ -106,12 +121,13 @@ void loop() {
   // Try to balance if not tipped
   if (!tipped) {
     // Build observation vector (much match training order):
-    // [pitch, pitch_rate, wheel_vel_left, wheel_vel_right]
+    // [pitch, pitch_rate, wheel_vel_left, wheel_vel_right, wheel_pos]
     float obs[ACTOR_OBS_SIZE] = {
       pitch + PITCH_OFFSET,
       pitch_rate,
       wheel_vel_left,
-      wheel_vel_right
+      wheel_vel_right,
+      wheel_pos
     };
 
     // Run inference (actor network forward pass)
@@ -149,20 +165,20 @@ void loop() {
     if (fabsf(pitch) <= 0.3) {
       tipped = false;
 
-      // Reset the tip sensor pitch and filters
-      pitch = 0.0f;
+      // Reset the filters
       action_filtered[0] = 0.0f;
       action_filtered[1] = 0.0f;
-
-      // Reset the encoder counters
-      bala.ClearEncoder();
-      prev_enc_left = 0;
-      prev_enc_right = 0;
 
       // Wait a moment before starting
       Serial.printf("Untipped! Starting in %lu seconds\n", RESET_TIME_MS / 1000);
       delay(RESET_TIME_MS);
-      Serial.printf("Running...");
+
+      // Zero encoders and initialize pitch right before control resumes (matches sim reset)
+      bala.ClearEncoder();
+      prev_enc_left = 0;
+      prev_enc_right = 0;
+      pitch = read_accel_pitch();
+      Serial.println("Running...");
     }
   }
 
@@ -175,13 +191,14 @@ void loop() {
   print_counter = 0;
   int32_t batt_lvl = M5.Power.getBatteryLevel();
   int16_t batt_mv = M5.Power.getBatteryVoltage();
-  Serial.printf("batt_lvl=%d batt_mv=%d pitch=%.3f rate=%.3f vL=%.2f vR=%.2f tipped=%d\n",
+  Serial.printf("batt_lvl=%d batt_mv=%d pitch=%.3f rate=%.3f vL=%.2f vR=%.2f pos=%.3f tipped=%d\n",
                 batt_lvl, 
                 batt_mv, 
                 pitch, 
                 pitch_rate, 
                 wheel_vel_left, 
-                wheel_vel_right, 
+                wheel_vel_right,
+                wheel_pos,
                 (int)tipped);
   }
 #endif

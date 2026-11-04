@@ -52,6 +52,8 @@ class DomainRandomConfig:
         ridge_torque_max_nm: Max random torque to apply to axles (N-m)
         pitch_bias_max: +/- constant offset added to pitch obs per episode (rad)
         com_offset_x_max_m: +/- forward/back shift of chassis CoM per episode (m)
+        backlash_steps_max: Max steps of zero torque after a wheel's torque reverses. Models
+                            gearbox slop.
     """
     pitch_noise_std_dev: float = 0.0
     pitch_rate_noise_std_dev: float = 0.0
@@ -68,6 +70,7 @@ class DomainRandomConfig:
     ridge_torque_max_nm: float = 0.0
     pitch_bias_max: float = 0.0
     com_offset_x_max_m: float = 0.0
+    backlash_steps_max: int = 0
     
 
 class BalanceBotEnv(gym.Env):
@@ -103,6 +106,7 @@ class BalanceBotEnv(gym.Env):
         position_penalty_coef=0.0,
         speed_penalty_coef=0.0,
         yaw_penalty_coef=0.0,
+        action_rate_penalty_coef=0.0,
         tip_threshold_deg=30.0,
         domain_rand=None,
     ):
@@ -137,6 +141,8 @@ class BalanceBotEnv(gym.Env):
                                         from the starting position
             yaw_penalty_coef (float): Scales the abs(yaw_rate) penalty, discourages spinning around
                                       the Z axis
+            action_rate_penalty_coef (float): Scales the sum((action - prev_action)^2) penalty,
+                                              discourages rapid changes in motor commands
             tip_threshold_deg (float): Angle (degrees) in which the robot is considered tipped
             domain_rand (DomainRandomConfig): Configuration for performing various domain
                                               randomizations (None to disable)
@@ -229,6 +235,7 @@ class BalanceBotEnv(gym.Env):
         self.position_penalty_coef = position_penalty_coef
         self.speed_penalty_coef = speed_penalty_coef
         self.yaw_penalty_coef = yaw_penalty_coef
+        self.action_rate_penalty_coef = action_rate_penalty_coef
 
         # Save tip threshold
         self.tip_threshold_deg = tip_threshold_deg
@@ -248,6 +255,12 @@ class BalanceBotEnv(gym.Env):
         self._pitch_bias = 0.0
         self._prev_ticks = np.zeros(2)
         self._tick_phase = np.zeros(2)
+
+        # Set initial variables for dealing with gearbox slop
+        self._prev_action = np.zeros(2)
+        self._torque_sign = np.zeros(2)
+        self._backlash_count = np.zeros(2, dtype=int)
+        self._backlash_steps = 0
 
         # Initialize the viewer
         self._viewer = None
@@ -433,6 +446,14 @@ class BalanceBotEnv(gym.Env):
             for _ in range(self._action_delay):
                 self._action_buffer.append(np.zeros(self.action_space.shape))
 
+        # Reset action history and backlash state, and draw this episode's backlash
+        self._prev_action = np.zeros(2)
+        self._torque_sign = np.zeros(2)
+        self._backlash_count = np.zeros(2, dtype=int)
+        self._backlash_steps = 0
+        if self.dr is not None and self.dr.backlash_steps_max > 0:
+            self._backlash_steps = int(self.np_random.integers(0, self.dr.backlash_steps_max + 1))
+
         return self._get_obs(), {}
 
     def step(self, action):
@@ -449,6 +470,9 @@ class BalanceBotEnv(gym.Env):
             truncated (bool): True if the episode has reached max_steps
             info (dict): Empty, no extra info returned
         """
+        # Keep the action the policy chose (before delay/noise/backlash) for the rate penalty
+        policy_action = np.array(action, dtype=np.float64)
+
         # Apply action delay: add current action to buffer and pop off previously added action
         if self.dr is not None and self._action_delay > 0:
             self._action_buffer.append(action.copy())
@@ -462,6 +486,20 @@ class BalanceBotEnv(gym.Env):
                 size=action.shape
             )
             action = np.clip(action + noise, -1.0, 1.0)
+
+        # Gearbox backlash: when a wheel's torque reverses direction, the gears must cross the
+        # slop before torque reaches the wheel. Model this as zero torque for a few steps.
+        if self._backlash_steps > 0:
+            action = np.array(action, dtype=np.float64)
+            for i in range(2):
+                sign = np.sign(action[i]) if abs(action[i]) > 0.02 else 0.0
+                if sign != 0.0 and sign != self._torque_sign[i]:
+                    if self._torque_sign[i] != 0.0:
+                        self._backlash_count[i] = self._backlash_steps
+                    self._torque_sign[i] = sign
+                if self._backlash_count[i] > 0:
+                    action[i] = 0.0
+                    self._backlash_count[i] -= 1
 
         # Set motors to given (normalized) torque
         self.data.ctrl[self.left_motor_id]  = action[0]
@@ -534,15 +572,21 @@ class BalanceBotEnv(gym.Env):
         #   position: penalty for drifting from the starting position
         #   speed: penalty for drifting
         #   yaw: penalty for rotating around Z axis
+        #   action_rate: penalty for rapid motor commands
         pitch_penalty = self.pitch_penalty_coef * pitch**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
         position_penalty = self.position_penalty_coef * (x_pos**2 + y_pos**2)
         speed_penalty = self.speed_penalty_coef * (x_vel**2 + y_vel**2)
         yaw_penalty = self.yaw_penalty_coef * abs(yaw_rate)
+        action_rate_penalty = self.action_rate_penalty_coef * \
+            np.sum((policy_action - self._prev_action) ** 2)
 
         # Reward function: subtract penalties from the alive bonus
         reward = self.alive_bonus - pitch_penalty - action_penalty - position_penalty - \
-            speed_penalty - yaw_penalty
+            speed_penalty - yaw_penalty - action_rate_penalty
+
+        # Store the previous action
+        self._prev_action = policy_action
 
         # Termination (if robot tips or we run out of time in the episode)
         terminated = abs(pitch) > math.radians(self.tip_threshold_deg)
