@@ -92,6 +92,7 @@ class BalanceBotEnv(gym.Env):
         sensor_left_wheel_pos="left_wheel_pos",
         sensor_right_wheel_pos="right_wheel_pos",
         encoder_ticks_per_rev=None,
+        wheel_pos_limit=10.0,
         actuator_left_motor="left_motor",
         actuator_right_motor="right_motor",
         left_wheel_joint="left_wheel_joint",
@@ -121,6 +122,8 @@ class BalanceBotEnv(gym.Env):
             sensor_right_wheel_pos (str): MJCF name of the right wheel position (encoder) sensor
             encoder_ticks_per_rev (int or None): If set, compute wheel velocity from whole encoder
                                                  ticks like the real encoders (None = ideal)
+            wheel_pos_limit (float): Clip the wheel position observation to +/- this many radians
+                                     (10 rad is about 22 cm of travel). Must match the firmware.
             actuator_left_motor (str): MJCF name of the left motor actuator
             actuator_right_motor (str): MJCF name of the right motor actuator
             left_wheel_joint (str): MJCF name of the left wheel joint
@@ -186,6 +189,7 @@ class BalanceBotEnv(gym.Env):
         self.sensor_left_wheel_pos = sensor_left_wheel_pos
         self.sensor_right_wheel_pos = sensor_right_wheel_pos
         self.encoder_ticks_per_rev = encoder_ticks_per_rev
+        self.wheel_pos_limit = wheel_pos_limit
 
         # Get ID of actuators from MJCF names
         self.left_motor_id = mujoco.mj_name2id(
@@ -207,9 +211,9 @@ class BalanceBotEnv(gym.Env):
         self._chassis_ipos_orig = self.model.body_ipos[self._chassis_id].copy()
 
         # Define observation space (i.e. what the agent can see) and limits
-        # [pitch, pitch_rate, wheel_vel_left, wheel_vel_right]
-        obs_low  = np.array([-np.pi, -20.0, -50.0, -50.0], dtype=np.float32)
-        obs_high = np.array([ np.pi,  20.0,  50.0,  50.0], dtype=np.float32)
+        # [pitch, pitch_rate, wheel_vel_left, wheel_vel_right, wheel_pos]
+        obs_low  = np.array([-np.pi, -20.0, -50.0, -50.0, -wheel_pos_limit], dtype=np.float32)
+        obs_high = np.array([ np.pi,  20.0,  50.0,  50.0,  wheel_pos_limit], dtype=np.float32)
         self.observation_space = spaces.Box(obs_low, obs_high, dtype=np.float32)
 
         # Define action space (i.e. what the agent can do) and limits, normalized to [-1, 1]
@@ -271,34 +275,48 @@ class BalanceBotEnv(gym.Env):
         self._pitch = self.alpha * (self._pitch + pitch_rate * self.model.opt.timestep) + \
                     (1 - self.alpha) * accel_pitch
 
-        # Use either simulated encoders or ideal wheel velocities
+        # Read wheel angles (rad). Like real encoders, these are relative to the chassis.
+        wheel_pos = np.array([
+            self.data.sensor(self.sensor_left_wheel_pos).data[0],
+            self.data.sensor(self.sensor_right_wheel_pos).data[0],
+        ])
+
         if self.encoder_ticks_per_rev:
-            # Convert wheel angles (rad) to whole encoder ticks, like the real encoders. The
-            # per-episode phase offset places the tick boundaries randomly, since a real robot
-            # doesn't start exactly on a tick edge.
+            # Convert wheel angles to whole encoder ticks, like the real encoders. The per-episode
+            # phase offset places the tick boundaries randomly, since a real robot doesn't start
+            # exactly on a tick edge.
             rad_per_tick = 2.0 * np.pi / self.encoder_ticks_per_rev
-            wheel_pos = np.array([
-                self.data.sensor(self.sensor_left_wheel_pos).data[0],
-                self.data.sensor(self.sensor_right_wheel_pos).data[0],
-            ])
             ticks = np.floor(wheel_pos / rad_per_tick + self._tick_phase)
 
             # Velocity from the tick change over one timestep (same math as the firmware)
             wheel_vel = (ticks - self._prev_ticks) * rad_per_tick / self.model.opt.timestep
-            wheel_vel_left, wheel_vel_right = wheel_vel
             self._prev_ticks = ticks
+
+            # Position from the tick count. Ticks start at 0 after reset, like ClearEncoder()
+            wheel_pos = ticks * rad_per_tick
         else:
-            # Ideal (continuous) wheel velocities
-            wheel_vel_left  = self.data.sensor(self.sensor_left_wheel_vel).data[0]
-            wheel_vel_right = self.data.sensor(self.sensor_right_wheel_vel).data[0]
+            # Ideal (continuous) wheel velocities; positions are already continuous
+            wheel_vel = np.array([
+                self.data.sensor(self.sensor_left_wheel_vel).data[0],
+                self.data.sensor(self.sensor_right_wheel_vel).data[0],
+            ])
+        wheel_vel_left, wheel_vel_right = wheel_vel
+
+        # Average wheel angle = forward travel since reset (turning cancels out), clipped
+        wheel_pos_avg = np.clip(
+            0.5 * (wheel_pos[0] + wheel_pos[1]),
+            -self.wheel_pos_limit,
+            self.wheel_pos_limit,
+        )
 
         # Construct initial observation
         obs = np.array([
             self._pitch + self._pitch_bias, 
             pitch_rate, 
             wheel_vel_left, 
-            wheel_vel_right
-        ], dtype=np.float32)
+            wheel_vel_right,
+            wheel_pos_avg
+        ], dtype=np.float32,)
 
         # Optionally add Gaussian noise to observations
         if self.dr is not None:
