@@ -6,9 +6,32 @@ Welcome to the Reinforcement Learning for Robotics workshop! We will work throug
 
 To dive deeper, I recommend checking out my full Reinforcement Learning for Robotics video series [here](https://www.youtube.com/watch?v=zsdceSTRBl4&list=PLYExBrZNJeQg&index=1).
 
-<a href="https://www.youtube.com/watch?v=zsdceSTRBl4&list=PLYExBrZNJeQg&index=1">
-  <img src=".images/rl-for-robotics-thumbnail-play.png" alt="Reinforcement Learning for Robotics" height="500">
-</a>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=zsdceSTRBl4&list=PLYExBrZNJeQg&index=1">
+    <img src=".images/rl-for-robotics-thumbnail-play.png" alt="Reinforcement Learning for Robotics" height="200">
+  </a>
+</p>
+
+## Get Started
+
+This workshop has two paths. Choose the robot kit that you're working with in order to continue:
+
+
+<table>
+  <tr>
+    <td width="150">
+      <a href="docs/bala2-walkthrough.md">
+        <img src=".images/bala2-fire.jpg" alt="M5Stack Bala2 Fire robot kit" height="100">
+      </a>
+    </td>
+    <td>
+
+A self-balancing robot kit. See the [full walkthrough](docs/bala2-walkthrough.md) for setup and training details.
+    </td>
+  </tr>
+</table>
+
+
 
 ## Required Hardware
 

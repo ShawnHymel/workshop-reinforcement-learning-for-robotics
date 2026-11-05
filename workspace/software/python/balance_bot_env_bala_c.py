@@ -104,7 +104,7 @@ class BalanceBotEnv(gym.Env):
         wheel_col_geom="wheel_left_col",
         chassis_trim_deg=0.0,
         alive_bonus=1.0,
-        vel_leak=0.995,
+        vel_tau=0.035,
         pos_leak=0.999,
         heading_leak=1.0,
         pitch_penalty_coef=0.5, 
@@ -140,10 +140,11 @@ class BalanceBotEnv(gym.Env):
                                     CoM is above the axle, this will be 0. If CoM is behind the 
                                     axle, this should be a positive value to denote a natural lean.
             alive_bonus (float): Reward given each step the robot stays upright.
-            vel_leak (float): Leaky-integrator coefficient for velocity estimation. 0.995 is about 
-                              1 sec of "memory."
-            pos_leak (float): Leaky-integrator coefficient for position estimation. 0.999 is about 
-                              5 sec of "memory."
+            vel_tau (float): Time constant (s) of the low-pass filter on the motor command used
+                             to estimate wheel speed. Matches the motor's mechanical time
+                             constant (~35 ms for the FM90 model). Must match the firmware.
+            pos_leak (float): Leaky-integrator coefficient for estimating position from the
+                              command. 0.999 is about 5 sec of "memory." Must match the firmware.
             heading_leak (float): Leaky-integrator coefficient for heading estimation. 1.0 means no
                                    leak (idefinite accumulation).
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
@@ -258,7 +259,7 @@ class BalanceBotEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
 
         # Save leaky-integrator coefficients
-        self._vel_leak = vel_leak
+        self._vel_tau = vel_tau
         self._pos_leak = pos_leak
         self._heading_leak = heading_leak
 
@@ -568,12 +569,16 @@ class BalanceBotEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         self._step += 1
 
-        # Command integration: estimate something proportional to position based on actions
-        # Note: do this before _get_obs(), as the pos estimate is used in the obs vector
+        # Command-based motion estimates. The motor's speed follows its command (back-EMF), so:
+        #   velocity estimate = command low-passed with the motor's time constant
+        #   position estimate = leaky integral of the command
+        # Use the command the policy chose (what the firmware knows), not the delayed/noisy
+        # version the motor received in sim. Note: do this before _get_obs(), as both
+        # estimates are in the observation vector.
         dt = self.model.opt.timestep
-        cmd = 0.5 * (action[0] + action[1])
-        self._cmd_vel = self._pos_leak * (self._cmd_vel + cmd * dt)
-        self._cmd_pos = self._pos_leak * (self._cmd_pos + self._cmd_vel * dt)
+        cmd = 0.5 * float(np.sum(np.clip(policy_action, -1.0, 1.0)))
+        self._cmd_vel += (dt / self._vel_tau) * (cmd - self._cmd_vel)
+        self._cmd_pos = self._pos_leak * (self._cmd_pos + cmd * dt)
 
         # Get actual forward velocity (privileged info) by projecting world-frame velocity onto the
         # chassis body frame X axis.
