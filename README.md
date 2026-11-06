@@ -24,7 +24,7 @@ This workshop has two paths. Choose the robot kit that you're working with in or
       </a>
     </td>
     <td>
-      If you have the <a href="https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K038-B/16679760">M5Stack Bala2 Fire kit</a>, click <a href="docs/bala2-tutorial.md">here to go to the tutorial</a>.
+      If you have the <a href="https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752">M5Stack Bala2 Fire kit</a>, click <a href="docs/bala2-tutorial.md">here to go to the tutorial</a>.
     </td>
   </tr>
   <tr>
@@ -34,7 +34,7 @@ This workshop has two paths. Choose the robot kit that you're working with in or
       </a>
     </td>
     <td>
-      If you have the <a href="https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752">M5Stack Bala-C Plus kit</a>, click <a href="docs/bala-c-tutorial.md">here to go to the tutorial</a>.
+      If you have the <a href="https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K038-B/16679760">M5Stack Bala-C Plus kit</a>, click <a href="docs/bala-c-tutorial.md">here to go to the tutorial</a>.
     </td>
   <tr>
 </table>
