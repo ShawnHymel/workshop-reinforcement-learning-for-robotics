@@ -59,3 +59,18 @@ In the *Library Manager*, search for and install the following libraries:
 
 Connect the balance bot to your computer using a USB cable. Upload the *balance_bot_bala2.ino* sketch to the robot. Once complete, unplug the USB cable from the robot, carefully set the robot upright on a smooth, level surface, and let it go.
 
+## Going Further
+
+If your robot is not balancing (despite balancing in simulation), you've hit the *sim-to-real* gap. In other words, things work in simulation but not in the real world. This is due to a variety of possible reasons, including inaccurate modeling (e.g. no tire ridges), sensor or actuator noise, timing or implementation mismatches, bad calibration, and so on.
+
+There are a few ways to combat the sim-to-real gap. The first is to tune some of the `// Settings` parameters in the Arduino firmware. If you find that your robot is slowly drifting forward or backward, try changing `PITCH_OFFSET`. If the motors are too jerky, try lowering `MOTOR_BOOST`.
+
+The other option is to introduce other domain randomization settings, add more training phases (if necessary), and train your agent again. This is a good place to get AI to help you figure out where to apply DR: in Colab (after running through all the training cells), navigate to `workspace/software/python/runs/`, go into one or both of the runs for the phases, and download `charts_metrics.csv` and `losses_metrics.csv`. These are the CSV versions of the TensorBoard charts, which LLMs can read more easily than e.g. screenshots. Note that if you download them from both phases, you'll need to rename the files to reflect which phase they came from.
+
+<img src="../.images/rl-robot-download-csv.png" alt="Paste actor.h into Arduino">
+
+Upload these CSV files along with the code from this repository to your favorite AI tool (e.g. Claude), tell it which balance bot you're using, and describe the behavior you're seeing on the real robot. It should walk you through some diagnostics and help you modify the parameters or DR code.
+
+You can also try asking it to design a new behavior, like spinning in a circle or adding remote control (e.g. WiFi access point and web page).
+
+Happy hacking!
