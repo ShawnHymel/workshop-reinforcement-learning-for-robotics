@@ -16,93 +16,28 @@ To dive deeper, I recommend checking out my full Reinforcement Learning for Robo
 
 This workshop has two paths. Choose the robot kit that you're working with in order to continue:
 
-
 <table>
   <tr>
-    <td width="150">
-      <a href="docs/bala2-walkthrough.md">
-        <img src=".images/bala2-fire.jpg" alt="M5Stack Bala2 Fire robot kit" height="100">
+    <td>
+      <a href="docs/bala2-tutorial.md">
+        <img src=".images/bala2-fire.jpg" alt="M5Stack Bala2 Fire robot kit" height="150">
       </a>
     </td>
     <td>
-
-A self-balancing robot kit. See the [full walkthrough](docs/bala2-walkthrough.md) for setup and training details.
+      If you have the <a href="https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K038-B/16679760">M5Stack Bala2 Fire kit</a>, click <a href="docs/bala2-tutorial.md">here to go to the tutorial</a>.
     </td>
   </tr>
+  <tr>
+    <td>
+      <a href="docs/bala-c-tutorial.md">
+        <img src=".images/bala-c-plus.jpg" alt="M5Stack Bala2 Fire robot kit" height="150">
+      </a>
+    </td>
+    <td>
+      If you have the <a href="https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752">M5Stack Bala-C Plus kit</a>, click <a href="docs/bala-c-tutorial.md">here to go to the tutorial</a>.
+    </td>
+  <tr>
 </table>
-
-
-
-## Required Hardware
-
-For this workshop, you will need the [M5Stack Bala-C Plus kit](https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K038-B/16679760).
-
-Follow the instructions in the kit to build the robot.
-
-## Required Software
-
-You will need to install the following software on your computer:
-
- * [Docker Desktop](https://www.docker.com/products/docker-desktop/)
- * [Arduino IDE](https://www.arduino.cc/en/software/)
-
-## Installation
-
-Make sure *Docker Desktop* running before continuing to the next step.
-
-Open a terminal and build the Docker image:
-
-```sh
-docker build -t rl-robotics -f Dockerfile.cpu .
-```
-
-Run the image:
-
-```sh
-docker run -it --rm -p 3000:3000 -p 6006:6006 -v "${PWD}/workspace:/workspace" --shm-size=2g rl-robotics
-```
-
-Notes:
- * Port 3000 is for the WebTop interface
- * Port 6006 is for TensorBoard
- * VS Code is memory hungry, so we bump the shared memory up to 2 GB
-
-Browse to [http://localhost:3000](http://localhost:3000/) to interact with WebTop.
-
-## Training
-
-On WebTop, open the Jupyter Lab application. Navigate to **workspace/software/python/** and open **train_with_ppo_dr.ipynb**. Click on the first cell and press *shift+enter* to run each cell in sequence. Note that training will take 1-2 hours, depending on your computer's hardware.
-
-<img src=".images/rl-robot-training.png" alt="Reinforcement Learning for Robotics training" height="500">
-
-On another browser tab (either inside the Docker container or on your host computer), navigate to [http://localhost:6006](http://localhost:6006/). You should see TensorBoard plotting the various charts over the course of the training curriculum.
-
-<img src=".images/rl-robot-training-charts.png" alt="Reinforcement Learning for Robotics charts" height="500">
-
-## Deployment
-
-The last few cells in the training notebook convert the trained AI agent to pure C code (in an *actor.h* file). Find this file on your host computer. It should be in the most recent *workshop/software/python/runs/BalanceBot-v0_balance-bot-phase-3_.../* folder. Open the file and copy the contents.
-
-Open *workspace/software/arduino/balance_bot/balance_bot.ino* in the Arduino IDE. Navigate to the *actor.h* tab. Highlight the existing code (previously trained actor neural network), delete it, and paste in your newly generated *actor.h* code.
-
-<img src=".images/rl-robot-paste-actor.png" alt="Paste actor.h into Arduino" height="500">
-
-Go to **File > Preferences**. Add the following URL to the *Additional boardss manager URLs* list:
-
-```
-https://static-cdn.m5stack.com/resource/arduino/package_m5stack_index.json
-```
-
-Click **OK** and let the new board definition install.
-
-In the *Library Manager*, search for and install the following libraries:
-
- * **M5GFX**
- * **M5Unified**
-
-Connect the balance bot to your computer using a USB cable. Upload the *balance_bot.ino* sketch to the robot. Once complete, unplug the USB cable from the robot, carefully set the robot upright on a smooth, level surface, and let it go.
-
-> **Note**: The M5Stack Bala-C does not include encoders on the motors or wheels. As a result, it will struggle to stay upright in one place. The 3-phase training cycle does a decent job at including estimated position and heading information, but it's far form perfect. The more expensive [Bala2 Fire](https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752) includes encoders and does a much better job at balancing. I use the Bala2 Fire in the video series for this reason.
 
 ## License
 

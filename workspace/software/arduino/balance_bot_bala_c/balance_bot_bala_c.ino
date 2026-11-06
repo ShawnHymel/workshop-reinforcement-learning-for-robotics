@@ -7,16 +7,16 @@
 // Settings
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
 #define LOAD_IMU_CALIB 0                // 0 to disable loading calibration data from NVS
-const float PITCH_OFFSET = -0.03f;     // Tune this so the robot stays balanced (+: back bias, -: front bias)
+const float PITCH_OFFSET = 0.0f;        // Tune this so the robot stays balanced (+: back bias, -: front bias)
 const float MOTOR_BOOST = 0.6f;         // Tune this so the motors are responsive on battery power
 const float MOTOR_TRIM_LEFT = 1.0f;     // The hobby motors are asymmetric. Adjust that here.
 const float MOTOR_TRIM_RIGHT = 1.0f;    // The hobby motors are asymmetric. Adjust that here.
 const float ACTION_DEADBAND = 0.0f;     // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.0f;        // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
-const float VEL_LEAK = 0.995f;           // Integrator leak for estimating velocity from commands
-const float POS_LEAK = 0.999f;             // Integrator leak for estimating position from velocity commands estimate
-const float HEADING_LEAK = 1.0f;         // Integrator leak for estimating heading from yaw rate
+const float VEL_TAU = 0.035f;           // Speed-estimate time constant (must match training)
+const float POS_LEAK = 0.999f;          // Position-estimate leak (must match training)
+const float HEADING_LEAK = 1.0f;        // Heading-estimate leak (must match training)
 const float PITCH_INIT = -0.199f;        // Initial pitch measurement (helps comp filter converge to eq faster)
 const float TIMESTEP = 0.005f;          // Time (sec) between intervals
 const float MOTOR_SCALE = 127.0f;       // Scale motors from [-1, 1] to [-127, 127]
@@ -129,10 +129,12 @@ void loop() {
     action_motors[0] = (fabs(action_filtered[0]) < ACTION_DEADBAND) ? 0.0f : action_filtered[0];
     action_motors[1] = (fabs(action_filtered[1]) < ACTION_DEADBAND) ? 0.0f : action_filtered[1];
 
-    // Estimate velocity and position using commands
-    float cmd = 0.5f * (action_motors[0] + action_motors[1]);
-    cmd_vel = VEL_LEAK * (cmd_vel + cmd * TIMESTEP);
-    cmd_pos = POS_LEAK * (cmd_pos + cmd_vel * TIMESTEP);
+    // Command-based motion estimates (must match training):
+    //   speed = command low-passed with the motor's time constant
+    //   position = leaky integral of the command
+    float cmd = 0.5f * (action[0] + action[1]);
+    cmd_vel += (TIMESTEP / VEL_TAU) * (cmd - cmd_vel);
+    cmd_pos = POS_LEAK * (cmd_pos + cmd * TIMESTEP);
 
     // Calculate actual motor values from normalized values (boost if needed)
     int16_t motor_left =  (int16_t)(action_motors[0] * 

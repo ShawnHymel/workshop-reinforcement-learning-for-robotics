@@ -105,7 +105,7 @@ class BalanceBotEnv(gym.Env):
         chassis_trim_deg=0.0,
         alive_bonus=1.0,
         vel_tau=0.035,
-        pos_leak=0.999,
+        pos_leak=0.9995,
         heading_leak=1.0,
         pitch_penalty_coef=0.5, 
         action_penalty_coef=0.01,
