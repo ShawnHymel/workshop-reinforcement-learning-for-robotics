@@ -2,7 +2,7 @@
 # Bala2 Fire Balance Bot Tutorial
 
 <p align="center">
-    <img src="../.images/bala2-fire.jpg" alt="M5Stack Bala2 Fire robot kit" height="300">
+    <img src="../.images/bala-c-plus.jpg" alt="M5Stack Bala2 Fire robot kit" height="300">
 <p align="center">
 
 Welcome to the Reinforcement Learning for Robotics workshop for the [Bala2 Fire balance bot](https://www.digikey.com/en/products/detail/m5stack-technology-co-ltd/K014-E/16679752).

@@ -57,7 +57,11 @@ In the *Library Manager*, search for and install the following libraries:
  * **M5GFX**
  * **M5Unified**
 
-Connect the balance bot to your computer using a USB cable. Upload the *balance_bot_bala2.ino* sketch to the robot. Once complete, unplug the USB cable from the robot, carefully set the robot upright on a smooth, level surface, and let it go.
+Connect the balance bot to your computer using a USB cable. Go to **Tools > Board > M5Stack** and select the **M5Fire** board option. Select the serial port associated with your robot.
+
+<img src="../.images/arduino-board-bala2.png" alt="Select the M5Stack board in Arduino">
+
+Press the **Upload** button to compile and upload the sketch to the robot. Once complete, unplug the USB cable from the robot, carefully set the robot upright on a smooth, level surface, and let it go.
 
 ## Going Further
 
