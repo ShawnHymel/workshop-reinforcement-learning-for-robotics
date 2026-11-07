@@ -15,7 +15,7 @@ Press `shift+enter` to run each cell in a sequence. Feel free to read throguh th
 
 > Note: We are running the training sequence twice. In the first phase, we are just trying to get the robot to balance using the ideal simulation parameters. In the second phase, we introduce *domain randomization* (DR), where we randomly vary different aspects of the robot and environment (e.g. mass, sensor noise, motor noise, etc.). This is what helps create a robust policy: rather than trying to perfectly model the robot, sensors, actuators, etc. in simulation, we have the agent learn to deal with variations and noise.
 
-During training, you can press the refresn on the TensorBoard cell to update the charts.
+During training, you can press the refresh on the TensorBoard cell to update the charts.
 
 <img src="../.images/rl-robot-training-charts.png" alt="TensorBoard training chrats">
 
