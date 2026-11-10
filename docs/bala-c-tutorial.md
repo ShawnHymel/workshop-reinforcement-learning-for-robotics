@@ -46,17 +46,17 @@ Copy the downloaded *actor.h* file and paste it into the *workspace/software/ard
 
 Follow these directions if you have access to the premade USB stick for the workshop. If any of these steps do not work, go to the *Without Workshop USB Stick* section below to download the software and libaries from the Internet.
 
-Copy the folders on the USB stick for your particular OS ( `Linux`, `macOS`, or `Windows`).
+> **Note**: If you are using Linux, please see the *Windout Workshop USB Stick directions below.
 
-Unzip the *board-definitions-rl-for-robotics-\<OS\>.zip* file and copy the `rl-for-robotics` folder to the following location (replace `<USERNAME>` with your particular username):
+Copy the folders on the USB stick for your particular OS (`macOS`, or `Windows`).
 
- * Linux: `~/.arduino15/staging/packages/`
+Unzip the *rl-for-robotics-\<OS\>.zip* file and copy the `rl-for-robotics` folder to the following location (replace `<USERNAME>` with your particular username):
+
  * macOS: `~/Library/Arduino15/staging/packages/`
  * Windows: `C:\Users\<USERNAME>\AppData\Local\Arduino15\packages\`
 
-Unzip the *m5-libraries.zip* filt. Move the `M5GFX` and `M5Unified` folders to the following location:
+Unzip the *m5-libraries.zip* filt. Copy the `M5GFX` and `M5Unified` folders to the following directory:
 
- * Linux: `~/Arduino/libraries/`
  * macOS: `~/Documents/Arduino/libraries/`
  * Windows: `C:\Users\<USERNAME>>\OneDrive\Documents\Arduino\libraries`
 
