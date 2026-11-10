@@ -28,7 +28,7 @@ Here are the charts you should care about:
  * **losses/approx_kl**: KL divergence, which tells how far the policy’s action distribution has moved from the policy that collected the batch (~0.01-0.02 is healthy)
  * **losses/clipfrac**: Fraction of samples whose probability ratio (new policy vs. old) moved beyond +/-20%  (~0.1–0.3 is healthy)
 
-## Deployment
+## Download actor.h
 
 The last few cells in the training notebook convert the trained AI agent to pure C code (in an *actor.h* file). Find this file on your host computer. It should be in the most recent *workshop/software/python/output/* folder. Right-click on the file and select **Download**.
 
@@ -36,13 +36,33 @@ The last few cells in the training notebook convert the trained AI agent to pure
 
 Copy the downloaded *actor.h* file and paste it into the *workspace/software/arduino/balance_bot_bala_c/* folder, choose to overwrite the existing *actor.h*.
 
-Download and install the [Arduino IDE](https://www.arduino.cc/en/software/).
-
-Open *workspace/software/arduino/balance_bot_bala_c/balance_bot_bala_c.ino* in the Arduino IDE.
-
 > Note: *actor.h* contains your trained RL agent (just the actor part of the actor-critic agent). It is a relatively simple neural network that takes in the observation vector and outputs the recommended action for each motor. Because it's simple enough, we just perform inference directly in the CPU using basic multiplications, additions, and tanh functions (no SIMD, GPU, or NPU acceleration). Feel free to look through the actor.h file to see how we're doing this.
 
 <img src="../.images/rl-robot-paste-actor.png" alt="Paste actor.h into Arduino" height="500">
+
+## Install Arduino and Libraries
+
+### With Workshop USB Stick
+
+Follow these directions if you have access to the premade USB stick for the workshop. If any of these steps do not work, go to the *Without Workshop USB Stick* section below to download the software and libaries from the Internet.
+
+Copy the folders on the USB stick for your particular OS ( `Linux`, `macOS`, or `Windows`).
+
+Unzip the *board-definitions-rl-for-robotics-\<OS\>.zip* file and copy the `rl-for-robotics` folder to the following location (replace `<USERNAME>` with your particular username):
+
+ * Linux: `~/.arduino15/staging/packages/`
+ * macOS: `~/Library/Arduino15/staging/packages/`
+ * Windows: `C:\Users\<USERNAME>\AppData\Local\Arduino15\packages\`
+
+Unzip the *m5-libraries.zip* filt. Move the `M5GFX` and `M5Unified` folders to the following location:
+
+ * Linux: `~/Arduino/libraries/`
+ * macOS: `~/Documents/Arduino/libraries/`
+ * Windows: `C:\Users\<USERNAME>>\OneDrive\Documents\Arduino\libraries`
+
+### Without Workshop USB Stick
+
+Download and install the [Arduino IDE](https://www.arduino.cc/en/software/).
 
 Go to **File > Preferences**. Add the following URL to the *Additional boardss manager URLs* list:
 
@@ -50,14 +70,20 @@ Go to **File > Preferences**. Add the following URL to the *Additional boardss m
 https://static-cdn.m5stack.com/resource/arduino/package_m5stack_index.json
 ```
 
-Click **OK** and let the new board definition install.
+Wait a moment, as you should see the Arduino IDE update the board definitions list. Then, open the *Boards Manager* and search for **M5Stack**. Click to install and wait while the board definitions install (this will take several minutes).
 
 In the *Library Manager*, search for and install the following libraries:
 
  * **M5GFX**
  * **M5Unified**
 
+## Upload Balance Bot Firmware
+
+Open *workspace/software/arduino/balance_bot_bala_c/balance_bot_bala_c.ino* in the Arduino IDE.
+
 Connect the balance bot to your computer using a USB cable. Go to **Tools > Board > M5Stack** and select the **M5StickCPlus** board option. Select the serial port associated with your robot.
+
+> **Note**: If you loaded the board definition files from the USB stick, choose **Tools > Board > RL for Robotics > Bala-C Plus** instead.
 
 <img src="../.images/arduino-board-bala-c.png" alt="Select the M5Stack board in Arduino">
 
@@ -67,7 +93,7 @@ Press the **Upload** button to compile and upload the sketch to the robot. Once 
 
 If your robot is not balancing (despite balancing in simulation), you've hit the *sim-to-real* gap. In other words, things work in simulation but not in the real world. This is due to a variety of possible reasons, including inaccurate modeling (e.g. no tire ridges), sensor or actuator noise, timing or implementation mismatches, bad calibration, and so on.
 
-> Note: The Bala-C Plus does not have any wheel or motor encoders. As a result, we have to estimate how far the bot has drifted when trying to balance. This estimation involves a double integral and is quite leaky. As a result, your bot will likely drift some.
+> Note: The Bala-C Plus does not have any wheel or motor encoders. As a result, we have to estimate how far the bot has drifted when trying to balance. We estimate this by using a leaky integrator using motor commands. We also estimate speed using a low-pass filter. Without good speed and position measurements, your bot will likely drift some.
 
 There are a few ways to combat the sim-to-real gap. The first is to tune some of the `// Settings` parameters in the Arduino firmware. If the motors are too jerky, try lowering `MOTOR_BOOST`. If you find that your robot is slowly drifting forward or backward, try changing `PITCH_OFFSET`. You could also change `VEL_TAU` or `POS_LEAK` to affect the position estimation function, but you'll need to change them in the training Notebook and rerun training.
 

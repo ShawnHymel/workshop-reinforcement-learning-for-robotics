@@ -6,6 +6,7 @@
 
 // Settings
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
+#define LOAD_IMU_CALIB 0                // 0 to disable loading calibration data from NVS
 const float PITCH_OFFSET = 0.0f;        // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
 const float WHEEL_POS_LIMIT = 10.0f;    // Must match wheel_pos_limit in training (rad)
@@ -65,6 +66,7 @@ void setup() {
   Serial.println("Balance bot");
 
   // Load calibration data from NVS
+#if LOAD_IMU_CALIB
   m5_ret = M5.Imu.loadOffsetFromNVS();
   if (!m5_ret) {
     Serial.println("ERROR: No IMU calibration found!");
@@ -74,6 +76,7 @@ void setup() {
     }
   }
   Serial.println("IMU calibration loaded");
+#endif
 
   // Stop motors
   bala.SetSpeed(0, 0);

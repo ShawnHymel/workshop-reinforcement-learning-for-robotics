@@ -5,7 +5,7 @@
 #include "balac.h"
 
 // Settings
-#define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
+#define DEBUG 1                         // Enable debug printing on intervals (can affect motion!)
 #define LOAD_IMU_CALIB 0                // 0 to disable loading calibration data from NVS
 const float PITCH_OFFSET = 0.0f;        // Tune this so the robot stays balanced (+: back bias, -: front bias)
 const float MOTOR_BOOST = 0.6f;         // Tune this so the motors are responsive on battery power
